@@ -21,7 +21,12 @@ import { hostOwnsFile, initEmbedBridge, isEmbedded } from "./embed";
 import { useLayoutStore } from "./layoutStore";
 import { desktopBridge, initDesktopFiles, useFileStore } from "./files";
 import { useWorkspace } from "./workspace";
-import { adoptBackgroundFileHere, adoptFileHere, openFileHere, unsavedDocuments } from "./documents";
+import {
+  adoptBackgroundFileHere,
+  adoptFileHere,
+  openFileHere,
+  unsavedDocuments,
+} from "./documents";
 import { toast, toastError } from "./toast";
 import { Toasts } from "./components/Toasts";
 import { ShortcutsDialog } from "./components/ShortcutsDialog";

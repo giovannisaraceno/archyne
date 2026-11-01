@@ -43,7 +43,8 @@ export const EMBEDDED = isEmbedded();
 
 /** The workspace the shell bound this window to, if any. Read live: tests set it. */
 export function workspaceRoot(): string | null {
-  const ws = (globalThis as { archyne?: { workspace?: { root?: unknown } } }).archyne?.workspace;
+  const ws = (globalThis as { archyne?: { workspace?: { root?: unknown } } }).archyne
+    ?.workspace;
   return typeof ws?.root === "string" && ws.root ? ws.root : null;
 }
 
@@ -64,7 +65,12 @@ export function relativeToRoot(path: string | null): string | null {
   const root = workspaceRoot();
   if (!root || !path || !isUnderRoot(path, root)) return null;
   const r = trimTrailingSep(root);
-  return path.slice(r.length).replace(/^[\\/]+/, "").replace(/\\/g, "/") || null;
+  return (
+    path
+      .slice(r.length)
+      .replace(/^[\\/]+/, "")
+      .replace(/\\/g, "/") || null
+  );
 }
 
 /**
@@ -193,7 +199,9 @@ export function loadWorkspace(fallbackCode: string): { state: WorkspaceState; co
           writeIndex(state);
           return { state, code: fallbackCode };
         }
-        const activeId = docs.some((d) => d.id === stored.activeId) ? stored.activeId : docs[0].id;
+        const activeId = docs.some((d) => d.id === stored.activeId)
+          ? stored.activeId
+          : docs[0].id;
         writeIndex({ docs, activeId });
       }
     }

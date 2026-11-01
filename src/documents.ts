@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import { useGraphStore, SAMPLE, NEW_DIAGRAM } from "./store";
-import { decodeBase64, fileLabel, pickFile, workspaceInfo, useFileStore, type DesktopFile, type PickMode } from "./files";
+import {
+  decodeBase64,
+  fileLabel,
+  pickFile,
+  workspaceInfo,
+  useFileStore,
+  type DesktopFile,
+  type PickMode,
+} from "./files";
 import { openAsMermaid, type ImportSummary, type OpenedFile } from "./importFile";
 import { forgetWatched, readIfChanged } from "./diskWatch";
 import { toast } from "./toast";
