@@ -45,7 +45,15 @@ const TYPES = {
 };
 
 function parseArgs(argv) {
-  const opts = { port: 4173, open: true, host: false, file: null, root: null, autosave: true, mcp: false };
+  const opts = {
+    port: 4173,
+    open: true,
+    host: false,
+    file: null,
+    root: null,
+    autosave: true,
+    mcp: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (i === 0 && arg === "mcp") opts.mcp = true;
@@ -94,7 +102,9 @@ if (opts.version) {
 
 if (opts.root !== null) {
   if (opts.host) {
-    console.error("--root cannot be combined with --host: workspace mode listens on 127.0.0.1 only.");
+    console.error(
+      "--root cannot be combined with --host: workspace mode listens on 127.0.0.1 only.",
+    );
     process.exit(1);
   }
   let rootDir = null;
@@ -114,7 +124,12 @@ if (opts.mcp) {
     process.exit(1);
   }
   const pkgRoot = resolve(fileURLToPath(import.meta.url), "..", "..");
-  const tsx = join(pkgRoot, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+  const tsx = join(
+    pkgRoot,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsx.cmd" : "tsx",
+  );
   const child = spawn(tsx, [join(pkgRoot, "mcp", "server.ts")], {
     stdio: "inherit",
     env: { ...process.env, GRAPH_DIR: opts.root },
@@ -141,7 +156,9 @@ async function runWorkspace() {
   try {
     await stat(join(distDir, "index.html"));
   } catch {
-    console.error(`No build found at ${distDir}.\nIf you are running from a git checkout, run \`npm run build\` first.`);
+    console.error(
+      `No build found at ${distDir}.\nIf you are running from a git checkout, run \`npm run build\` first.`,
+    );
     process.exit(1);
   }
   const { startWorkspaceServer } = await import("./workspace.mjs");

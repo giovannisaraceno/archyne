@@ -184,7 +184,9 @@
   // Resolves { opened: DesktopFile | null, rest: string[] }.
   function start() {
     if (startup) return startup;
-    var target = new URLSearchParams(globalThis.location ? globalThis.location.search : "").get("file");
+    var target = new URLSearchParams(globalThis.location ? globalThis.location.search : "").get(
+      "file",
+    );
     startup = list()
       .then(function (files) {
         files.forEach(function (f) {
@@ -216,9 +218,11 @@
         });
       })
       .then(function (r) {
-        return (r.opened === null ? Promise.resolve(null) : load(r.opened)).then(function (file) {
-          return { opened: file, rest: r.rest };
-        });
+        return (r.opened === null ? Promise.resolve(null) : load(r.opened)).then(
+          function (file) {
+            return { opened: file, rest: r.rest };
+          },
+        );
       })
       .catch(function (e) {
         notice("Workspace startup failed: " + (e && e.message));

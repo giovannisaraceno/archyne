@@ -1,5 +1,14 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync, utimesSync, existsSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+  utimesSync,
+  existsSync,
+  rmSync,
+} from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,18 +19,37 @@ let tmp: string, root: string, outside: string, ws: any;
 
 const INDEX = `<html><head><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob:;"></head><body><script type="module" src="/app.js"></script></body></html>`;
 
-function call(method: string, path: string, opts: { headers?: Record<string, string>; body?: string; token?: boolean } = {}) {
-  return new Promise<{ status: number; headers: any; text: string; json: () => any }>((ok, bad) => {
-    const headers: Record<string, string> = { host: `127.0.0.1:${ws.port}`, ...(opts.headers ?? {}) };
-    if (opts.token !== false) headers["x-archyne-token"] = ws.token;
-    const req = request({ host: "127.0.0.1", port: ws.port, method, path, headers }, (res) => {
-      let text = "";
-      res.on("data", (c) => (text += c));
-      res.on("end", () => ok({ status: res.statusCode!, headers: res.headers, text, json: () => JSON.parse(text) }));
-    });
-    req.on("error", bad);
-    req.end(opts.body);
-  });
+function call(
+  method: string,
+  path: string,
+  opts: { headers?: Record<string, string>; body?: string; token?: boolean } = {},
+) {
+  return new Promise<{ status: number; headers: any; text: string; json: () => any }>(
+    (ok, bad) => {
+      const headers: Record<string, string> = {
+        host: `127.0.0.1:${ws.port}`,
+        ...(opts.headers ?? {}),
+      };
+      if (opts.token !== false) headers["x-archyne-token"] = ws.token;
+      const req = request(
+        { host: "127.0.0.1", port: ws.port, method, path, headers },
+        (res) => {
+          let text = "";
+          res.on("data", (c) => (text += c));
+          res.on("end", () =>
+            ok({
+              status: res.statusCode!,
+              headers: res.headers,
+              text,
+              json: () => JSON.parse(text),
+            }),
+          );
+        },
+      );
+      req.on("error", bad);
+      req.end(opts.body);
+    },
+  );
 }
 
 beforeAll(async () => {
@@ -48,7 +76,13 @@ beforeAll(async () => {
   writeFileSync(join(dist, "index.html"), INDEX);
   writeFileSync(join(dist, "app.js"), "//app");
   writeFileSync(join(tmp, "bridge.js"), "// bridge");
-  ws = await startWorkspaceServer({ root, port: 0, autosave: true, distDir: dist, bridgePath: join(tmp, "bridge.js") });
+  ws = await startWorkspaceServer({
+    root,
+    port: 0,
+    autosave: true,
+    distDir: dist,
+    bridgePath: join(tmp, "bridge.js"),
+  });
 });
 afterAll(async () => {
   await ws.close();
@@ -104,7 +138,10 @@ describe("API", () => {
     expect((await put("path=new/d.mmd&base=abc", "v5")).status).toBe(400);
   });
   it("rejects oversize bodies with 413 and bad input with 400", async () => {
-    expect((await call("PUT", "/__archyne/file?path=big.mmd", { body: "x".repeat(1024 * 1024 + 1) })).status).toBe(413);
+    expect(
+      (await call("PUT", "/__archyne/file?path=big.mmd", { body: "x".repeat(1024 * 1024 + 1) }))
+        .status,
+    ).toBe(413);
     expect(existsSync(join(root, "big.mmd"))).toBe(false);
     expect((await call("GET", "/__archyne/file")).status).toBe(400);
   });
@@ -113,7 +150,14 @@ describe("API", () => {
 describe("security", () => {
   it("requires the token", async () => {
     expect((await call("GET", "/__archyne/list", { token: false })).status).toBe(403);
-    expect((await call("GET", "/__archyne/list", { token: false, headers: { "x-archyne-token": "bad" } })).status).toBe(403);
+    expect(
+      (
+        await call("GET", "/__archyne/list", {
+          token: false,
+          headers: { "x-archyne-token": "bad" },
+        })
+      ).status,
+    ).toBe(403);
   });
   it("serves bridge.js without a token", async () => {
     const r = await call("GET", "/__archyne/bridge.js", { token: false });
@@ -121,31 +165,55 @@ describe("security", () => {
     expect(r.text).toBe("// bridge");
   });
   it("rejects foreign Host, foreign Origin and OPTIONS; never sends CORS headers", async () => {
-    expect((await call("GET", "/__archyne/list", { headers: { host: "evil.com" } })).status).toBe(403);
-    expect((await call("GET", "/__archyne/list", { headers: { host: `localhost:${ws.port}` } })).status).toBe(200);
-    expect((await call("GET", "/__archyne/list", { headers: { origin: "http://evil.com" } })).status).toBe(403);
-    const ok = await call("GET", "/__archyne/list", { headers: { origin: `http://127.0.0.1:${ws.port}` } });
+    expect(
+      (await call("GET", "/__archyne/list", { headers: { host: "evil.com" } })).status,
+    ).toBe(403);
+    expect(
+      (await call("GET", "/__archyne/list", { headers: { host: `localhost:${ws.port}` } }))
+        .status,
+    ).toBe(200);
+    expect(
+      (await call("GET", "/__archyne/list", { headers: { origin: "http://evil.com" } })).status,
+    ).toBe(403);
+    const ok = await call("GET", "/__archyne/list", {
+      headers: { origin: `http://127.0.0.1:${ws.port}` },
+    });
     expect(ok.status).toBe(200);
     const opt = await call("OPTIONS", "/__archyne/list");
     expect(opt.status).toBe(403);
-    for (const r of [ok, opt]) expect(Object.keys(r.headers).filter((h) => h.startsWith("access-control-"))).toEqual([]);
+    for (const r of [ok, opt])
+      expect(Object.keys(r.headers).filter((h) => h.startsWith("access-control-"))).toEqual([]);
   });
   it("confines paths to root", async () => {
-    for (const p of ["../x.mmd", "..%2Foutside%2Fsecret.mmd", "link/secret.mmd", "evil.mmd", "/etc/passwd.mmd"]) {
+    for (const p of [
+      "../x.mmd",
+      "..%2Foutside%2Fsecret.mmd",
+      "link/secret.mmd",
+      "evil.mmd",
+      "/etc/passwd.mmd",
+    ]) {
       expect((await call("GET", `/__archyne/file?path=${p}`)).status).toBe(403);
     }
-    expect((await call("PUT", "/__archyne/file?path=link/new.mmd", { body: "x" })).status).toBe(403);
-    expect((await call("PUT", "/__archyne/file?path=evil.mmd", { body: "x" })).status).toBe(403);
+    expect((await call("PUT", "/__archyne/file?path=link/new.mmd", { body: "x" })).status).toBe(
+      403,
+    );
+    expect((await call("PUT", "/__archyne/file?path=evil.mmd", { body: "x" })).status).toBe(
+      403,
+    );
     expect(readFileSync(join(outside, "secret.mmd"), "utf8")).toBe("secret");
     expect(existsSync(join(outside, "new.mmd"))).toBe(false);
   });
   it("only allows .mmd and .mermaid", async () => {
-    expect((await call("PUT", "/__archyne/file?path=notes.txt", { body: "x" })).status).toBe(403);
+    expect((await call("PUT", "/__archyne/file?path=notes.txt", { body: "x" })).status).toBe(
+      403,
+    );
     expect((await call("PUT", "/__archyne/file?path=x.js", { body: "x" })).status).toBe(403);
     expect(readFileSync(join(root, "notes.txt"), "utf8")).toBe("txt");
   });
   it("offers no way to delete", async () => {
-    expect((await call("DELETE", "/__archyne/file?path=b.mmd")).status).toBeGreaterThanOrEqual(400);
+    expect((await call("DELETE", "/__archyne/file?path=b.mmd")).status).toBeGreaterThanOrEqual(
+      400,
+    );
     expect(existsSync(join(root, "b.mmd"))).toBe(true);
   });
 });

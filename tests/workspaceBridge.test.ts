@@ -20,11 +20,14 @@ function fakeFetch(url: string, init: any = {}) {
   const u = new URL(url, "http://x");
   const path = u.searchParams.get("path") ?? "";
   if (u.pathname === "/__archyne/list") {
-    const files = [...disk.keys()].sort().map((p) => ({ path: p, mtimeMs: disk.get(p)!.mtimeMs }));
+    const files = [...disk.keys()]
+      .sort()
+      .map((p) => ({ path: p, mtimeMs: disk.get(p)!.mtimeMs }));
     return reply(200, { files });
   }
   const f = disk.get(path);
-  if (u.pathname === "/__archyne/stat") return f ? reply(200, { mtimeMs: f.mtimeMs }) : reply(404);
+  if (u.pathname === "/__archyne/stat")
+    return f ? reply(200, { mtimeMs: f.mtimeMs }) : reply(404);
   if (init.method === "PUT") {
     const base = u.searchParams.get("base");
     if (base !== null && f && f.mtimeMs > Number(base)) return reply(409);
@@ -107,13 +110,24 @@ describe("workspace bridge", () => {
     const b = load("?file=c.mmd");
     const p = b.openedFile();
     await vi.advanceTimersByTimeAsync(0);
-    const boxes = [...document.querySelectorAll<HTMLInputElement>("[data-archyne-dialog] input")];
-    expect(boxes.map((x) => x.value)).toEqual(["a.mmd", "b.mmd", "c.mmd", "d.mmd", "e.mmd", "f.mmd"]);
+    const boxes = [
+      ...document.querySelectorAll<HTMLInputElement>("[data-archyne-dialog] input"),
+    ];
+    expect(boxes.map((x) => x.value)).toEqual([
+      "a.mmd",
+      "b.mmd",
+      "c.mmd",
+      "d.mmd",
+      "e.mmd",
+      "f.mmd",
+    ]);
     expect(boxes.filter((x) => x.checked).map((x) => x.value)).toEqual(["c.mmd"]);
     boxes[0].checked = true;
     const got: string[] = [];
     b.onOpenFile((f: any) => got.push(f.path));
-    [...document.querySelectorAll("button")].find((x) => x.textContent === "Open selected")!.click();
+    [...document.querySelectorAll("button")]
+      .find((x) => x.textContent === "Open selected")!
+      .click();
     expect((await p).path).toBe(`${ROOT}/c.mmd`);
     await vi.advanceTimersByTimeAsync(0);
     expect(got).toEqual([`${ROOT}/a.mmd`]);
@@ -132,7 +146,9 @@ describe("workspace bridge", () => {
     await vi.advanceTimersByTimeAsync(0);
     const got: string[] = [];
     b.onOpenFile((f: any) => got.push(f.path));
-    [...document.querySelectorAll("button")].find((x) => x.textContent === "Empty tab")!.click();
+    [...document.querySelectorAll("button")]
+      .find((x) => x.textContent === "Empty tab")!
+      .click();
     expect(await p).toBeNull();
     await vi.advanceTimersByTimeAsync(0);
     expect(got).toEqual([]);
@@ -140,7 +156,10 @@ describe("workspace bridge", () => {
 
   it("skips the dialog when tabs under root are stored, delivering only ?file", async () => {
     put("a.mmd", "b.mmd", "c.mmd", "d.mmd", "e.mmd", "f.mmd");
-    localStorage.setItem("graph:workspace", JSON.stringify({ v: 1, activeId: "1", docs: [{ id: "1", path: `${ROOT}/a.mmd` }] }));
+    localStorage.setItem(
+      "graph:workspace",
+      JSON.stringify({ v: 1, activeId: "1", docs: [{ id: "1", path: `${ROOT}/a.mmd` }] }),
+    );
     const b = load("?file=b.mmd");
     expect((await b.openedFile()).path).toBe(`${ROOT}/b.mmd`);
     const got: string[] = [];
@@ -155,9 +174,13 @@ describe("workspace bridge", () => {
     const b = load();
     const p = b.showOpen();
     await vi.advanceTimersByTimeAsync(0);
-    const boxes = [...document.querySelectorAll<HTMLInputElement>("[data-archyne-dialog] input")];
+    const boxes = [
+      ...document.querySelectorAll<HTMLInputElement>("[data-archyne-dialog] input"),
+    ];
     boxes[1].checked = true;
-    [...document.querySelectorAll("button")].find((x) => x.textContent === "Open selected")!.click();
+    [...document.querySelectorAll("button")]
+      .find((x) => x.textContent === "Open selected")!
+      .click();
     expect((await p).path).toBe(`${ROOT}/b.mmd`);
   });
 
@@ -179,7 +202,9 @@ describe("workspace bridge", () => {
     const b = load();
     expect(await b.writeFile(`${ROOT}/a.mmd`, "x", { base: 5 })).toEqual({ mtimeMs: 100 });
     expect(calls.at(-1)!.url).toContain("base=5");
-    await expect(b.writeFile(`${ROOT}/a.mmd`, "y", { base: 5 })).rejects.toMatchObject({ code: "conflict" });
+    await expect(b.writeFile(`${ROOT}/a.mmd`, "y", { base: 5 })).rejects.toMatchObject({
+      code: "conflict",
+    });
     expect(await b.statFile(`${ROOT}/a.mmd`)).toEqual({ mtimeMs: 100 });
     expect(await b.statFile(`${ROOT}/none.mmd`)).toBeNull();
     expect(await b.readFile(`${ROOT}/a.mmd`)).toBe("x");

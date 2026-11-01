@@ -17,16 +17,30 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-function run(args: string[], { waitFor, timeoutMs = 15000 }: { waitFor?: RegExp; timeoutMs?: number } = {}) {
+function run(
+  args: string[],
+  { waitFor, timeoutMs = 15000 }: { waitFor?: RegExp; timeoutMs?: number } = {},
+) {
   return new Promise<{ code: number | null; out: string; err: string }>((ok) => {
     const p = spawn(process.execPath, [BIN, ...args], {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, ARCHYNE_DIST: join(dir, "dist") },
     });
-    let out = "", err = "";
-    const done = (code: number | null) => { clearTimeout(t); ok({ code, out, err }); };
-    const t = setTimeout(() => { p.kill(); }, timeoutMs);
-    p.stdout.on("data", (c) => { out += c; if (waitFor?.test(out)) { p.kill(); } });
+    let out = "",
+      err = "";
+    const done = (code: number | null) => {
+      clearTimeout(t);
+      ok({ code, out, err });
+    };
+    const t = setTimeout(() => {
+      p.kill();
+    }, timeoutMs);
+    p.stdout.on("data", (c) => {
+      out += c;
+      if (waitFor?.test(out)) {
+        p.kill();
+      }
+    });
     p.stderr.on("data", (c) => (err += c));
     p.on("exit", (code) => done(code));
   });
@@ -56,17 +70,26 @@ describe("archyne CLI argument errors", () => {
 
 describe("archyne --root", () => {
   it("prints the ready line with the real port for --port 0", async () => {
-    const r = await run(["--root", dir, "--port", "0", "--no-open"], { waitFor: /Archyne running at .*\n/ });
+    const r = await run(["--root", dir, "--port", "0", "--no-open"], {
+      waitFor: /Archyne running at .*\n/,
+    });
     expect(r.out).toMatch(/^Archyne running at http:\/\/127\.0\.0\.1:\d+\/\n/);
     expect(r.out).not.toContain(":0/");
   });
   it("--no-autosave sets autosave false in the served config", async () => {
-    for (const [flags, want] of [[[], "true"], [["--no-autosave"], "false"]] as const) {
+    for (const [flags, want] of [
+      [[], "true"],
+      [["--no-autosave"], "false"],
+    ] as const) {
       const r = await new Promise<string>((ok) => {
-        const p = spawn(process.execPath, [BIN, "--root", dir, "--port", "0", "--no-open", ...flags], {
-          stdio: ["ignore", "pipe", "ignore"],
-          env: { ...process.env, ARCHYNE_DIST: join(dir, "dist") },
-        });
+        const p = spawn(
+          process.execPath,
+          [BIN, "--root", dir, "--port", "0", "--no-open", ...flags],
+          {
+            stdio: ["ignore", "pipe", "ignore"],
+            env: { ...process.env, ARCHYNE_DIST: join(dir, "dist") },
+          },
+        );
         let out = "";
         p.stdout.on("data", async (c) => {
           out += c;
@@ -86,7 +109,9 @@ describe("archyne --root", () => {
     await new Promise<void>((ok) => blocker.listen(0, "127.0.0.1", ok));
     const port = (blocker.address() as any).port;
     try {
-      expect((await run(["--root", dir, "--port", String(port), "--no-open"])).code).not.toBe(0);
+      expect((await run(["--root", dir, "--port", String(port), "--no-open"])).code).not.toBe(
+        0,
+      );
     } finally {
       blocker.close();
     }

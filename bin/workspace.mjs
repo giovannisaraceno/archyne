@@ -9,8 +9,26 @@
  */
 import { createServer } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { readFile, readdir, realpath, rename, stat, writeFile, mkdir, unlink } from "node:fs/promises";
-import { dirname, extname, join, normalize, resolve, sep, relative, isAbsolute } from "node:path";
+import {
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  stat,
+  writeFile,
+  mkdir,
+  unlink,
+} from "node:fs/promises";
+import {
+  dirname,
+  extname,
+  join,
+  normalize,
+  resolve,
+  sep,
+  relative,
+  isAbsolute,
+} from "node:path";
 
 const MAX_BYTES = 1024 * 1024;
 const MAX_LIST = 500;
@@ -63,7 +81,13 @@ export function injectWorkspace(html, { token, root, autosave, nonce }) {
   return head >= 0 ? out.slice(0, head) + tags + out.slice(head) : tags + out;
 }
 
-export async function startWorkspaceServer({ root, port = 0, autosave = true, distDir, bridgePath }) {
+export async function startWorkspaceServer({
+  root,
+  port = 0,
+  autosave = true,
+  distDir,
+  bridgePath,
+}) {
   const realRoot = await realpath(resolve(root));
   if (!(await stat(realRoot)).isDirectory()) throw new Error(`Not a directory: ${root}`);
   const dist = resolve(distDir);
@@ -83,7 +107,8 @@ export async function startWorkspaceServer({ root, port = 0, autosave = true, di
 
   /** Resolve an API path to a real absolute path inside root, or throw. */
   async function resolvePath(rel, { mustExist }) {
-    if (typeof rel !== "string" || rel === "" || rel.includes("\0")) throw new HttpError(400, "Bad path");
+    if (typeof rel !== "string" || rel === "" || rel.includes("\0"))
+      throw new HttpError(400, "Bad path");
     if (isAbsolute(rel)) throw new HttpError(403, "Forbidden");
     const abs = resolve(realRoot, rel);
     if (!inside(realRoot, abs) || abs === realRoot) throw new HttpError(403, "Forbidden");
@@ -138,7 +163,10 @@ export async function startWorkspaceServer({ root, port = 0, autosave = true, di
           await walk(full);
         } else if (e.isFile() && EXT.has(extname(e.name).toLowerCase())) {
           try {
-            files.push({ path: relative(realRoot, full).split(sep).join("/"), mtimeMs: (await stat(full)).mtimeMs });
+            files.push({
+              path: relative(realRoot, full).split(sep).join("/"),
+              mtimeMs: (await stat(full)).mtimeMs,
+            });
           } catch {}
         }
       }
@@ -149,10 +177,12 @@ export async function startWorkspaceServer({ root, port = 0, autosave = true, di
   }
 
   async function api(req, res, url) {
-    if (!safeEqual(req.headers["x-archyne-token"], token)) throw new HttpError(403, "Forbidden");
+    if (!safeEqual(req.headers["x-archyne-token"], token))
+      throw new HttpError(403, "Forbidden");
     const op = url.pathname.slice(API.length);
     const rel = url.searchParams.get("path");
-    if (op === "list" && req.method === "GET") return send(res, 200, { files: await listFiles() });
+    if (op === "list" && req.method === "GET")
+      return send(res, 200, { files: await listFiles() });
     if (op === "stat" && req.method === "GET") {
       const p = await resolvePath(rel, { mustExist: true });
       try {
@@ -171,7 +201,11 @@ export async function startWorkspaceServer({ root, port = 0, autosave = true, di
       }
       if (!st.isFile()) throw new HttpError(400, "Not a file");
       if (st.size > MAX_BYTES) throw new HttpError(413, "Too large");
-      return send(res, 200, { path: rel, content: await readFile(p, "utf8"), mtimeMs: st.mtimeMs });
+      return send(res, 200, {
+        path: rel,
+        content: await readFile(p, "utf8"),
+        mtimeMs: st.mtimeMs,
+      });
     }
     if (op === "file" && req.method === "PUT") {
       const baseRaw = url.searchParams.get("base");
@@ -189,7 +223,8 @@ export async function startWorkspaceServer({ root, port = 0, autosave = true, di
       } catch (e) {
         if (e instanceof HttpError) throw e;
       }
-      if (base !== null && existing && existing.mtimeMs > base) throw new HttpError(409, "Conflict");
+      if (base !== null && existing && existing.mtimeMs > base)
+        throw new HttpError(409, "Conflict");
       await mkdir(dirname(p), { recursive: true });
       // Re-check confinement now that the directory exists.
       if (!inside(realRoot, await realpath(dirname(p)))) throw new HttpError(403, "Forbidden");
@@ -203,11 +238,15 @@ export async function startWorkspaceServer({ root, port = 0, autosave = true, di
       }
       return send(res, 200, { mtimeMs: (await stat(p)).mtimeMs });
     }
-    throw new HttpError(op === "list" || op === "stat" || op === "file" ? 405 : 404, "Not found");
+    throw new HttpError(
+      op === "list" || op === "stat" || op === "file" ? 405 : 404,
+      "Not found",
+    );
   }
 
   async function serveStatic(req, res, url) {
-    if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Method not allowed");
+    if (req.method !== "GET" && req.method !== "HEAD")
+      throw new HttpError(405, "Method not allowed");
     const requested = decodeURIComponent(url.pathname);
     const candidate = normalize(join(dist, requested === "/" ? "/index.html" : requested));
     if (!inside(dist, candidate)) throw new HttpError(403, "Forbidden");
@@ -219,7 +258,12 @@ export async function startWorkspaceServer({ root, port = 0, autosave = true, di
     }
     const isIndex = candidate === join(dist, "index.html");
     if (isIndex) {
-      const html = injectWorkspace(body.toString("utf8"), { token, root: realRoot, autosave, nonce });
+      const html = injectWorkspace(body.toString("utf8"), {
+        token,
+        root: realRoot,
+        autosave,
+        nonce,
+      });
       return send(res, 200, html, TYPES[".html"], { "cache-control": "no-store" });
     }
     res.writeHead(200, {
@@ -233,11 +277,13 @@ export async function startWorkspaceServer({ root, port = 0, autosave = true, di
     try {
       if (req.method === "OPTIONS") throw new HttpError(403, "Forbidden");
       const host = String(req.headers.host ?? "");
-      if (host !== `127.0.0.1:${boundPort}` && host !== `localhost:${boundPort}`) throw new HttpError(403, "Forbidden");
+      if (host !== `127.0.0.1:${boundPort}` && host !== `localhost:${boundPort}`)
+        throw new HttpError(403, "Forbidden");
       const origin = req.headers.origin;
       const url = new URL(req.url ?? "/", "http://localhost");
       const isApi = url.pathname.startsWith(API);
-      if (origin !== undefined && isApi && origin !== `http://${host}`) throw new HttpError(403, "Forbidden");
+      if (origin !== undefined && isApi && origin !== `http://${host}`)
+        throw new HttpError(403, "Forbidden");
       if (url.pathname === `${API}bridge.js`) {
         if (req.method !== "GET") throw new HttpError(405, "Method not allowed");
         return send(res, 200, await readFile(bridgePath, "utf8"), TYPES[".js"]);
@@ -246,7 +292,8 @@ export async function startWorkspaceServer({ root, port = 0, autosave = true, di
       return await serveStatic(req, res, url);
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;
-      if (!res.headersSent) send(res, status, e instanceof HttpError ? e.message : "Internal error");
+      if (!res.headersSent)
+        send(res, status, e instanceof HttpError ? e.message : "Internal error");
       else res.end();
     }
   });
@@ -264,6 +311,7 @@ export async function startWorkspaceServer({ root, port = 0, autosave = true, di
     port: boundPort,
     token,
     root: realRoot,
-    close: () => new Promise((ok) => (server.closeAllConnections?.(), server.close(() => ok()))),
+    close: () =>
+      new Promise((ok) => (server.closeAllConnections?.(), server.close(() => ok()))),
   };
 }
