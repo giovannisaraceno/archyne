@@ -19,7 +19,8 @@
  */
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
-import { join, normalize, extname, resolve, sep } from "node:path";
+import { join, normalize, extname, resolve, sep, relative } from "node:path";
+import { statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
@@ -44,10 +45,14 @@ const TYPES = {
 };
 
 function parseArgs(argv) {
-  const opts = { port: 4173, open: true, host: false, file: null };
+  const opts = { port: 4173, open: true, host: false, file: null, root: null, autosave: true, mcp: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--port" || arg === "-p") opts.port = Number(argv[++i]);
+    if (i === 0 && arg === "mcp") opts.mcp = true;
+    else if (arg === "--root") opts.root = argv[++i] ?? "";
+    else if (arg.startsWith("--root=")) opts.root = arg.slice(7);
+    else if (arg === "--no-autosave") opts.autosave = false;
+    else if (arg === "--port" || arg === "-p") opts.port = Number(argv[++i]);
     else if (arg.startsWith("--port=")) opts.port = Number(arg.slice(7));
     else if (arg === "--no-open") opts.open = false;
     else if (arg === "--host") opts.host = true;
@@ -66,8 +71,11 @@ if (opts.help) {
   npx archyne [file.mmd] [options]
 
   -p, --port <n>   port to listen on (default 4173)
+      --root <dir> workspace mode: edit the .mmd files of a folder
+      --no-autosave  with --root, save only on Cmd+S
       --host       also listen on the LAN, not just 127.0.0.1
       --no-open    do not open a browser
+  archyne mcp --root <dir>   run the MCP server over stdio on a folder
   -h, --help       this message
   -v, --version    print the version
 
@@ -82,6 +90,96 @@ if (opts.version) {
   );
   console.log(pkg.version);
   process.exit(0);
+}
+
+if (opts.root !== null) {
+  if (opts.host) {
+    console.error("--root cannot be combined with --host: workspace mode listens on 127.0.0.1 only.");
+    process.exit(1);
+  }
+  let rootDir = null;
+  try {
+    if (opts.root && statSync(opts.root).isDirectory()) rootDir = resolve(opts.root);
+  } catch {}
+  if (!rootDir) {
+    console.error(`--root is not a directory: ${opts.root}`);
+    process.exit(1);
+  }
+  opts.root = rootDir;
+}
+
+if (opts.mcp) {
+  if (!opts.root) {
+    console.error("Usage: archyne mcp --root <dir>");
+    process.exit(1);
+  }
+  const pkgRoot = resolve(fileURLToPath(import.meta.url), "..", "..");
+  const tsx = join(pkgRoot, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+  const child = spawn(tsx, [join(pkgRoot, "mcp", "server.ts")], {
+    stdio: "inherit",
+    env: { ...process.env, GRAPH_DIR: opts.root },
+    shell: process.platform === "win32",
+  });
+  child.on("error", (err) => {
+    console.error(`Could not start the MCP server: ${err.message}`);
+    process.exit(1);
+  });
+  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => child.kill(sig));
+  await new Promise(() => {});
+} else if (opts.root !== null) {
+  await runWorkspace();
+}
+
+async function runWorkspace() {
+  // ARCHYNE_DIST lets tests point workspace mode at a throwaway build.
+  const distDir = process.env.ARCHYNE_DIST ? resolve(process.env.ARCHYNE_DIST) : ROOT;
+  if (!Number.isInteger(opts.port) || opts.port < 0 || opts.port > 65535) {
+    console.error(`Not a usable port: ${opts.port}`);
+    process.exit(1);
+  }
+  try {
+    await stat(join(distDir, "index.html"));
+  } catch {
+    console.error(`No build found at ${distDir}.\nIf you are running from a git checkout, run \`npm run build\` first.`);
+    process.exit(1);
+  }
+  const { startWorkspaceServer } = await import("./workspace.mjs");
+  let ws;
+  try {
+    ws = await startWorkspaceServer({
+      root: opts.root,
+      port: opts.port,
+      autosave: opts.autosave,
+      distDir,
+      bridgePath: join(ROOT, "..", "bin", "workspace-bridge.js"),
+    });
+  } catch (err) {
+    if (err.code === "EADDRINUSE") console.error(`Port ${opts.port} is already in use.`);
+    else console.error(`Could not start: ${err.message}`);
+    process.exit(1);
+  }
+  const base = `http://127.0.0.1:${ws.port}/`;
+  console.log(`Archyne running at ${base}`);
+  let query = "";
+  if (opts.file) {
+    const rel = relative(ws.root, resolve(opts.file)).split(sep).join("/");
+    if (rel && !rel.startsWith("..")) query = `?file=${encodeURIComponent(rel)}`;
+  }
+  if (opts.open) openBrowser(base + query);
+  await new Promise(() => {});
+}
+
+function openBrowser(url) {
+  const [cmd, args] =
+    process.platform === "win32"
+      ? ["cmd", ["/c", "start", "", url]]
+      : process.platform === "darwin"
+        ? ["open", [url]]
+        : ["xdg-open", [url]];
+  spawn(cmd, args, { stdio: "ignore", detached: true })
+    .on("error", () => {})
+    .unref();
 }
 
 if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) {
