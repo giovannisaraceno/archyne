@@ -41,6 +41,38 @@ const INDEX_VERSION = 1;
  */
 export const EMBEDDED = isEmbedded();
 
+/** The workspace the shell bound this window to, if any. Read live: tests set it. */
+export function workspaceRoot(): string | null {
+  const ws = (globalThis as { archyne?: { workspace?: { root?: unknown } } }).archyne
+    ?.workspace;
+  return typeof ws?.root === "string" && ws.root ? ws.root : null;
+}
+
+function trimTrailingSep(p: string): string {
+  return p.length > 1 ? p.replace(/[\\/]+$/, "") : p;
+}
+
+/** Separator-aware: `/a/bc` is not under `/a/b`. */
+export function isUnderRoot(path: string, root: string): boolean {
+  const r = trimTrailingSep(root);
+  if (!path.startsWith(r)) return false;
+  const next = path.charAt(r.length);
+  return r.endsWith("/") || r.endsWith("\\") || next === "/" || next === "\\";
+}
+
+/** The root-relative path of a file in workspace mode, or null otherwise. */
+export function relativeToRoot(path: string | null): string | null {
+  const root = workspaceRoot();
+  if (!root || !path || !isUnderRoot(path, root)) return null;
+  const r = trimTrailingSep(root);
+  return (
+    path
+      .slice(r.length)
+      .replace(/^[\\/]+/, "")
+      .replace(/\\/g, "/") || null
+  );
+}
+
 /**
  * What is known about a document without loading its source.
  *
@@ -152,7 +184,27 @@ export function loadWorkspace(fallbackCode: string): { state: WorkspaceState; co
   }
 
   if (stored?.docs?.length && stored.v === INDEX_VERSION) {
-    const docs: DocMeta[] = stored.docs.map((d) => ({ ...d, handle: null }));
+    let docs: DocMeta[] = stored.docs.map((d) => ({ ...d, handle: null }));
+    const root = workspaceRoot();
+    if (root) {
+      // A port reused for another folder must not carry the old folder's tabs.
+      const kept = docs.filter((d) => !d.path || isUnderRoot(d.path, root));
+      if (kept.length !== docs.length) {
+        for (const d of docs) if (!kept.includes(d)) removeDocCode(d.id);
+        docs = kept;
+        if (docs.length === 0) {
+          const doc = blankDoc("Untitled");
+          const state: WorkspaceState = { docs: [doc], activeId: doc.id };
+          writeDocCode(doc.id, fallbackCode);
+          writeIndex(state);
+          return { state, code: fallbackCode };
+        }
+        const activeId = docs.some((d) => d.id === stored.activeId)
+          ? stored.activeId
+          : docs[0].id;
+        writeIndex({ docs, activeId });
+      }
+    }
     const activeId = docs.some((d) => d.id === stored.activeId) ? stored.activeId : docs[0].id;
     return { state: { docs, activeId }, code: readDocCode(activeId) ?? fallbackCode };
   }

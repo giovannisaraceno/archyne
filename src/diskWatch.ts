@@ -18,7 +18,8 @@
  */
 import { readDocCode, useWorkspace, writeDocCode, patchDoc } from "./workspace";
 import { useGraphStore } from "./store";
-import { desktopBridge, useFileStore } from "./files";
+import { desktopBridge, useFileStore, workspaceInfo } from "./files";
+import { startAutosave } from "./autosave";
 import { toast } from "./toast";
 
 /** What the two backends have in common: a path or a handle. */
@@ -75,11 +76,34 @@ const stamps = new Map<string, number>();
 /** Forget a document, so closing and reopening a file starts clean. */
 export function forgetWatched(docId: string): void {
   stamps.delete(docId);
+  bases.delete(docId);
+}
+
+/**
+ * The mtime of the last read we applied (or found already in sync) or own
+ * write, per document. Unlike `stamps` it does not move for a read that was
+ * left unapplied, so it is the right `base` for a conditional write.
+ */
+const bases = new Map<string, number>();
+
+export function getBase(docId: string): number | undefined {
+  return bases.get(docId);
+}
+
+export function setBase(docId: string, mtimeMs: number): void {
+  bases.set(docId, mtimeMs);
+}
+
+/** Record our own write so polling does not report it as an external change. */
+export function markWritten(docId: string, mtimeMs: number): void {
+  stamps.set(docId, mtimeMs);
+  bases.set(docId, mtimeMs);
 }
 
 /** Only used by tests, which need each case to start from nothing. */
 export function resetWatched(): void {
   stamps.clear();
+  bases.clear();
 }
 
 /**
@@ -106,7 +130,10 @@ export async function pollDisk(): Promise<void> {
 
     const savedCode = active ? useFileStore.getState().savedCode : doc.savedCode;
     // Our own write, or a change that produced identical text.
-    if (changed.content === savedCode) continue;
+    if (changed.content === savedCode) {
+      bases.set(doc.id, changed.stamp);
+      continue;
+    }
 
     const local = active ? useGraphStore.getState().code : readDocCode(doc.id);
     if (local !== null && savedCode !== null && local !== savedCode) {
@@ -121,6 +148,7 @@ export async function pollDisk(): Promise<void> {
       writeDocCode(doc.id, changed.content);
     }
     patchDoc(doc.id, { savedCode: changed.content });
+    bases.set(doc.id, changed.stamp);
     toast("watch.reloaded", "info", { name: doc.name });
   }
 }
@@ -146,7 +174,9 @@ export function watchDisk(): () => void {
   };
   const handle = setInterval(tick, POLL_MS);
   document.addEventListener("visibilitychange", tick);
+  const stopAutosave = workspaceInfo()?.autosave ? startAutosave() : null;
   return () => {
+    stopAutosave?.();
     clearInterval(handle);
     document.removeEventListener("visibilitychange", tick);
   };

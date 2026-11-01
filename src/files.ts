@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { useGraphStore } from "./store";
 import type { HostAi } from "./ai/hostBridge";
+import { relativeToRoot } from "./workspace";
 
 /**
  * Opening and saving `.mmd` files.
@@ -36,7 +37,13 @@ interface DesktopBridge {
   onOpenFile(cb: (file: DesktopFile) => void): void;
   showOpen(mode?: PickMode): Promise<DesktopFile | null>;
   showSave(defaultPath: string, content: string): Promise<string | null>;
-  writeFile(path: string, content: string): Promise<void>;
+  /** Present only when a server binds this window to a folder (workspace mode). */
+  workspace?: { root: string; autosave: boolean };
+  writeFile(
+    path: string,
+    content: string,
+    opts?: { base?: number },
+  ): Promise<void | { mtimeMs: number }>;
   /**
    * Modification time of a file, for noticing edits made outside the app.
    * Optional: a desktop build older than this feature will not have it, and
@@ -71,6 +78,16 @@ function desktop(): DesktopBridge | null {
 /** The desktop bridge, for the modules that need it beyond open and save. */
 export function desktopBridge(): DesktopBridge | null {
   return desktop();
+}
+
+/** The workspace object when running in workspace mode, otherwise null. */
+export function workspaceInfo(): { root: string; autosave: boolean } | null {
+  return desktop()?.workspace ?? null;
+}
+
+/** Tab label for a file: root-relative in workspace mode, else the basename. */
+export function fileLabel(path: string): string {
+  return relativeToRoot(path) ?? basename(path);
 }
 
 function supportsFsAccess(): boolean {
@@ -243,7 +260,7 @@ export const useFileStore = create<FileState>((set, get) => ({
 
   adopt: async (file) => {
     await useGraphStore.getState().applyCode(file.content, { record: true });
-    set({ name: basename(file.path), path: file.path, handle: null, savedCode: file.content });
+    set({ name: fileLabel(file.path), path: file.path, handle: null, savedCode: file.content });
   },
 
   open: async () => {
@@ -296,7 +313,7 @@ export const useFileStore = create<FileState>((set, get) => ({
 
     if (bridge) {
       const path = await bridge.showSave(suggested, code);
-      if (path) set({ name: basename(path), path, handle: null, savedCode: code });
+      if (path) set({ name: fileLabel(path), path, handle: null, savedCode: code });
       return;
     }
 
@@ -331,11 +348,12 @@ export const useFileStore = create<FileState>((set, get) => ({
  */
 export function initDesktopFiles(
   onFile: (file: { path: string; content: string }) => void,
+  onBackground?: (file: { path: string; content: string }) => void,
 ): void {
   const bridge = desktop();
   if (!bridge) return;
   void bridge.openedFile().then((file) => {
     if (file) onFile(file);
   });
-  bridge.onOpenFile(onFile);
+  bridge.onOpenFile(bridge.workspace && onBackground ? onBackground : onFile);
 }

@@ -16,3 +16,4 @@ src/render/boxModel.generated.ts
 src/widthTable.generated.ts
 THIRD-PARTY-NOTICES.md
 *.tsbuildinfo
+.claude/

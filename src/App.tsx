@@ -21,7 +21,12 @@ import { hostOwnsFile, initEmbedBridge, isEmbedded } from "./embed";
 import { useLayoutStore } from "./layoutStore";
 import { desktopBridge, initDesktopFiles, useFileStore } from "./files";
 import { useWorkspace } from "./workspace";
-import { adoptFileHere, openFileHere, unsavedDocuments } from "./documents";
+import {
+  adoptBackgroundFileHere,
+  adoptFileHere,
+  openFileHere,
+  unsavedDocuments,
+} from "./documents";
 import { toast, toastError } from "./toast";
 import { Toasts } from "./components/Toasts";
 import { ShortcutsDialog } from "./components/ShortcutsDialog";
@@ -55,7 +60,10 @@ export default function App() {
 
   useEffect(() => {
     // Pick up a file the desktop shell was launched with. No-op on the web.
-    initDesktopFiles((f) => void adoptFileHere(f));
+    initDesktopFiles(
+      (f) => void adoptFileHere(f),
+      (f) => void adoptBackgroundFileHere(f),
+    );
   }, []);
 
   useEffect(() => {
