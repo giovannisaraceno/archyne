@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { useGraphStore, SAMPLE, NEW_DIAGRAM } from "./store";
-import { decodeBase64, pickFile, useFileStore, type DesktopFile, type PickMode } from "./files";
+import { decodeBase64, fileLabel, pickFile, workspaceInfo, useFileStore, type DesktopFile, type PickMode } from "./files";
 import { openAsMermaid, type ImportSummary, type OpenedFile } from "./importFile";
 import { forgetWatched, readIfChanged } from "./diskWatch";
 import { toast } from "./toast";
@@ -291,6 +291,13 @@ export async function placeOpened(
   { file, imported }: OpenedFile,
   opts: { newDoc?: boolean; announce?: boolean } = {},
 ): Promise<void> {
+  if (workspaceInfo() && !imported && file.path) {
+    const existing = findDocByPath(file.path);
+    if (existing) {
+      await switchTo(existing);
+      return;
+    }
+  }
   if (opts.newDoc || shouldOpenInNewDoc()) await createDoc();
 
   // An imported diagram has never been written anywhere. Leaving `savedCode`
@@ -298,16 +305,17 @@ export async function placeOpened(
   // file on disk — otherwise closing the tab would take it without a word.
   const savedCode = imported ? null : file.content;
 
+  const label = file.path ? fileLabel(file.path) : file.name;
   await useGraphStore.getState().applyCode(file.content, { record: true });
   useFileStore.setState({
-    name: file.name,
+    name: label,
     path: file.path,
     handle: file.handle,
     savedCode,
   });
   // The tab takes the file's name, not "Untitled".
   patchDoc(useWorkspace.getState().activeId, {
-    name: file.name,
+    name: label,
     path: file.path,
     handle: file.handle,
     savedCode,
@@ -479,4 +487,32 @@ export function unsavedDocuments(): DocMeta[] {
     const current = doc.id === activeId ? useGraphStore.getState().code : readDocCode(doc.id);
     return current !== null && current !== saved;
   });
+}
+
+/** The id of the open document bound to `path`, if any (workspace mode). */
+function findDocByPath(path: string): string | null {
+  const { docs, activeId } = useWorkspace.getState();
+  const livePath = useFileStore.getState().path;
+  for (const d of docs) {
+    const p = d.id === activeId ? livePath : d.path;
+    if (p === path) return d.id;
+  }
+  return null;
+}
+
+/**
+ * A file that appeared while the user is working (workspace mode): a new tab
+ * beside the others, never taking focus. One already open is left alone.
+ */
+export async function adoptBackgroundFileHere(file: DesktopFile): Promise<void> {
+  if (!workspaceInfo()) return adoptFileHere(file);
+  if (findDocByPath(file.path)) return;
+  const doc: DocMeta = {
+    ...blankDoc(fileLabel(file.path)),
+    path: file.path,
+    savedCode: file.content,
+  };
+  writeDocCode(doc.id, file.content);
+  useWorkspace.setState((s) => ({ docs: [...s.docs, doc] }));
+  writeIndex(useWorkspace.getState());
 }
