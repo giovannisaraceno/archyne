@@ -26,8 +26,16 @@ CSS class names and internal store shape are _not_ public API.
 
 ## [Unreleased]
 
+## [1.3.0-alpha.2] — 2026-11-01
+
 ### Added
 
+- **Workspace mode.** `archyne --root <dir>` serves the app with a folder of
+  `.mmd` files: several diagrams open as tabs (restored next time, or opened
+  with `?file=`), changes are autosaved back to the files (`--no-autosave`
+  turns that off) with conflicts reported instead of overwritten, and
+  `archyne mcp --root <dir>` points the MCP server at the same folder. The
+  server listens on localhost only, with a per-run token.
 - **A code signing policy.** [CODE_SIGNING.md](CODE_SIGNING.md) says what
   will be signed (the Windows installer, built by the release workflow and
   nothing else), who approves each signing, and what Archyne sends over the

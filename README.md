@@ -97,6 +97,33 @@ Diagram families Archyne has no visual editor for — `gantt`, `pie`, `mindmap`
 and friends — still open, rendered read-only, with the Mermaid code fully
 editable and the file untouched on save.
 
+### Workspace mode
+
+```sh
+archyne --root <dir> [--port <n>|0] [--no-open] [--no-autosave]
+```
+
+Serves the app together with a folder of `.mmd` files and opens it in the
+browser (`--no-open` skips that; `--port 0` picks a free port). Open a file
+directly with `?file=<path relative to the root>`.
+
+- **Tabs.** Several diagrams can be open at once, one per tab; the open tabs
+  and the active one are restored the next time. When a `?file` names a
+  missing file, a warning is shown and the first tab opens instead, but only
+  when no tabs are restored from a previous session and the folder has 5 or
+  fewer files. With restored tabs the stored active tab is kept; with more
+  than 5 files a chooser dialog opens (pick files, or **Empty tab**).
+- **File listing.** The listing skips dot-directories, `node_modules` and
+  symlinks, and stops at 500 files.
+- **Autosave and conflicts.** Changes are written back to the file
+  automatically (disable with `--no-autosave`). If the file changed on disk
+  meanwhile, nothing is overwritten and you are told about the conflict.
+- **Security.** The server binds to localhost only, requires a per-run token,
+  and rejects requests carrying a foreign `Origin` on `/__archyne/` API paths.
+  Paths cannot escape the root.
+
+To let agents work on the same folder, run `archyne mcp --root <dir>`.
+
 ## Importing files that are not Mermaid
 
 **Import…** (in the overflow menu) takes seven other formats and converts each
@@ -328,6 +355,9 @@ escape the root, and if an agent rewrites a diagram without the
 `%% graph:positions` and `%% graph:waypoints` lines, the previous manual
 layout is carried over for the nodes and edges that still exist — an LLM
 restructuring your diagram won't scramble your hand-arranged layout.
+
+`archyne mcp --root <dir>` starts the same server on stdio with `<dir>` as the
+folder it reads and writes (instead of `GRAPH_DIR`).
 
 **Live co-editing.** A file open in the editor is watched, so an agent's write
 lands on the canvas within a couple of seconds without a reload. A document
