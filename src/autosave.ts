@@ -10,7 +10,7 @@
  */
 import { desktopBridge, useFileStore } from "./files";
 import { useGraphStore } from "./store";
-import { patchDoc, useWorkspace } from "./workspace";
+import { patchDoc, readDocCode, useWorkspace } from "./workspace";
 import { getBase, markWritten, setBase } from "./diskWatch";
 import { toast } from "./toast";
 
@@ -21,9 +21,17 @@ function isConflict(err: unknown): boolean {
   return !!e && (e.status === 409 || e.code === "conflict");
 }
 
+/** How soon to look again while a document's base is still unknown. */
+export const BASE_RETRY_MS = 500;
+
 export function startAutosave(): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let writing = false;
+  /** Writes run one at a time, in the order they were asked for. */
+  let queue: Promise<void> = Promise.resolve();
+  /** Documents edited since their last write. */
+  const dirty = new Set<string>();
+  /** docId -> last parse verdict seen while that document was on screen. */
+  const parseErrors = new Map<string, string | null>();
   /** docId -> savedCode at the moment of the conflict. */
   const paused = new Map<string, string | null>();
   /** savedCode values we set ourselves, so Cmd+S detection ignores them. */
@@ -34,54 +42,102 @@ export function startAutosave(): () => void {
     timer = null;
   };
 
-  async function flush(): Promise<void> {
-    clear();
-    if (writing) {
-      schedule();
-      return;
-    }
+  /** Write one document if it needs it. Returns true to try again later. */
+  async function writeDoc(id: string): Promise<boolean> {
+    if (!dirty.has(id)) return false;
     const { docs, activeId } = useWorkspace.getState();
-    const doc = docs.find((d) => d.id === activeId);
-    if (!doc) return;
-    const file = useFileStore.getState();
-    const path = file.path;
+    const doc = docs.find((d) => d.id === id);
     const bridge = desktopBridge();
-    if (!path || !bridge) return; // scratch document, or no bridge
-    const graph = useGraphStore.getState();
-    const code = graph.code;
-    if (graph.parseError !== null) return; // never write what Mermaid cannot read
-    if (code === file.savedCode) return;
-    if (paused.has(doc.id)) {
-      if (paused.get(doc.id) === file.savedCode) return;
-      paused.delete(doc.id);
+    if (!doc || !bridge) {
+      dirty.delete(id);
+      return false;
     }
+    const active = id === activeId;
+    const file = useFileStore.getState();
+    const path = active ? file.path : doc.path;
+    if (!path) {
+      dirty.delete(id); // scratch document
+      return false;
+    }
+    const code = active ? useGraphStore.getState().code : readDocCode(id);
+    const parseError = active
+      ? useGraphStore.getState().parseError
+      : (parseErrors.get(id) ?? null);
+    const savedCode = active ? file.savedCode : doc.savedCode;
+    if (code === null || parseError !== null || code === savedCode) {
+      dirty.delete(id); // never write what Mermaid cannot read, or what is already saved
+      return false;
+    }
+    if (paused.has(id)) {
+      if (paused.get(id) === savedCode) {
+        dirty.delete(id);
+        return false;
+      }
+      paused.delete(id);
+    }
+    const base = getBase(id);
+    // An unconditional write could overwrite a change made on disk: wait for
+    // diskWatch to record what it last read.
+    if (base === undefined) return true;
 
-    writing = true;
     try {
-      const base = getBase(doc.id);
-      const res = await bridge.writeFile(path, code, base === undefined ? undefined : { base });
-      ownSaved = code;
-      useFileStore.setState({ savedCode: code });
-      patchDoc(doc.id, { savedCode: code });
-      if (res && typeof res === "object") markWritten(doc.id, res.mtimeMs);
+      const res = await bridge.writeFile(path, code, { base });
+      dirty.delete(id);
+      if (id === useWorkspace.getState().activeId) {
+        ownSaved = code;
+        useFileStore.setState({ savedCode: code });
+      }
+      patchDoc(id, { savedCode: code });
+      if (res && typeof res === "object") markWritten(id, res.mtimeMs);
     } catch (err) {
+      dirty.delete(id);
       if (isConflict(err)) {
-        paused.set(doc.id, file.savedCode);
+        paused.set(id, savedCode);
         toast("watch.conflict", "error", { name: doc.name });
       }
       // Anything else: the next edit tries again.
-    } finally {
-      writing = false;
     }
+    return false;
+  }
+
+  function flushIds(ids: string[]): Promise<void> {
+    queue = queue.then(async () => {
+      let retry = false;
+      for (const id of ids) if (await writeDoc(id)) retry = true;
+      if (retry) {
+        clear();
+        timer = setTimeout(() => void flushAll(), BASE_RETRY_MS);
+      }
+    });
+    return queue;
+  }
+
+  function flushAll(): Promise<void> {
+    clear();
+    return flushIds([...dirty]);
   }
 
   function schedule() {
     clear();
-    timer = setTimeout(() => void flush(), AUTOSAVE_MS);
+    timer = setTimeout(() => void flushAll(), AUTOSAVE_MS);
   }
 
   const unsubCode = useGraphStore.subscribe((s, prev) => {
-    if (s.code !== prev.code) schedule();
+    const { activeId } = useWorkspace.getState();
+    if (activeId && s.parseError !== prev.parseError) parseErrors.set(activeId, s.parseError);
+    if (s.code === prev.code) return;
+    if (activeId) {
+      parseErrors.set(activeId, s.parseError);
+      dirty.add(activeId);
+    }
+    schedule();
+  });
+
+  // Switching tabs: the previous document's text has just been stored by the
+  // switch, so write it now rather than let the timer find another document.
+  const unsubActive = useWorkspace.subscribe((s, prev) => {
+    if (s.activeId === prev.activeId || !prev.activeId) return;
+    if (dirty.has(prev.activeId)) void flushIds([prev.activeId]);
   });
 
   // Cmd+S writes without a base: pick up the new mtime so the next autosave
@@ -101,13 +157,14 @@ export function startAutosave(): () => void {
   });
 
   const onVisibility = () => {
-    if (document.visibilityState === "hidden") void flush();
+    if (document.visibilityState === "hidden") void flushAll();
   };
   document.addEventListener("visibilitychange", onVisibility);
 
   return () => {
     clear();
     unsubCode();
+    unsubActive();
     unsubSaved();
     document.removeEventListener("visibilitychange", onVisibility);
   };
