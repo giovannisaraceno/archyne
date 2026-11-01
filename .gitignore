@@ -38,3 +38,7 @@ packages/render/LICENSE
 # Browser profile of tests/smoke-ai-local.mts: it caches the model weights so a
 # rerun skips a download of several hundred megabytes. Local only.
 .smoke-profile
+# MAS project state (previously .task/, mas-archive/, .multi-agent-system/):
+# anchored, because an unanchored `mas/` pattern once silently matched
+# docs/mas/ too.
+/.mas/
