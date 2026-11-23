@@ -10,6 +10,7 @@
  */
 import type { AnyNode, DiagramKind, FlowEdge } from "./model/types";
 import type { PositionMap } from "./model/positions";
+import { boxOf } from "./boxes";
 import { readNodeStyles } from "./model/nodeStyle";
 import { readWaypoints, waypointKeys } from "./model/waypoints";
 import { readEdgeStyles } from "./model/edgeStyle";
@@ -79,8 +80,17 @@ export function placeNodes(
   const placed = Object.values(positions);
   let cascadeX = placed.length > 0 ? Math.max(...placed.map((p) => p.x)) + 260 : 0;
   let cascadeY = 0;
-  return nodes.map((n) => {
+  const ids = new Set(nodes.map((n) => n.id));
+  // A child's position is relative to its group, so the cascade (which is in
+  // canvas terms) would put it outside the group it belongs to. Children are
+  // placed inside their group instead, once every sibling is known. With no
+  // saved positions at all, ELK lays the whole drawing out next, so there is
+  // nothing to preserve and the search is skipped.
+  const insideGroup = (n: AnyNode) =>
+    placed.length > 0 && !!n.parentId && ids.has(n.parentId) && !positions[n.id];
+  const out = nodes.map((n) => {
     const p = positions[n.id];
+    if (insideGroup(n)) return n;
     if (!p) {
       const pos = { x: cascadeX, y: cascadeY };
       cascadeY += 110;
@@ -101,6 +111,95 @@ export function placeNodes(
         : {}),
     };
   });
+  return placeInsideGroups(out, insideGroup);
+}
+
+/** Room a group keeps around its contents: ELK's group padding (top holds the title). */
+const PAD = { top: 40, left: 16, bottom: 16, right: 16 };
+/** Clearance between a placed node and its siblings. */
+const GAP = 24;
+
+/**
+ * Put each child that has no saved position inside its group, in free space.
+ *
+ * Candidate spots are the group's top-left corner and the spots just right of
+ * and just below each sibling, tried in reading order (top to bottom, then
+ * left to right). The first one that overlaps no sibling and fits inside the
+ * group wins. If none fits, the free spot that grows the group least wins, and
+ * the group — and every group around it — grows to hold it. Nothing that
+ * already has a position moves.
+ *
+ * Deepest children first, so a nested group that has to grow is at its final
+ * size by the time it is placed in its own parent.
+ */
+function placeInsideGroups(nodes: AnyNode[], pending: (n: AnyNode) => boolean): AnyNode[] {
+  const todo = new Set(nodes.filter(pending).map((n) => n.id));
+  if (todo.size === 0) return nodes;
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const depth = (n: AnyNode): number => {
+    let d = 0;
+    const seen = new Set<string>();
+    for (let p = n.parentId; p && !seen.has(p); p = byId.get(p)?.parentId) {
+      seen.add(p);
+      d++;
+    }
+    return d;
+  };
+  const order = nodes.filter((n) => todo.has(n.id)).sort((a, b) => depth(b) - depth(a));
+
+  const grow = (groupId: string, w: number, h: number) => {
+    const g = byId.get(groupId)!;
+    const b = boxOf(g);
+    if (w <= b.w && h <= b.h) return;
+    const width = Math.max(w, b.w);
+    const height = Math.max(h, b.h);
+    const grown = {
+      ...g,
+      style: { ...g.style, width, height },
+      width,
+      height,
+      measured: undefined,
+    } as AnyNode;
+    byId.set(groupId, grown);
+    // The group may now stick out of its own parent: grow that one too.
+    if (g.parentId && byId.has(g.parentId) && !todo.has(groupId)) {
+      grow(g.parentId, b.x + width + PAD.right, b.y + height + PAD.bottom);
+    }
+  };
+
+  for (const n of order) {
+    const parentId = n.parentId!;
+    const siblings = [...byId.values()]
+      .filter((s) => s.parentId === parentId && s.id !== n.id && !todo.has(s.id))
+      .map(boxOf);
+    const size = boxOf({ ...n, position: { x: 0, y: 0 } } as AnyNode);
+    const frame = boxOf(byId.get(parentId)!);
+    const xs = [PAD.left, ...siblings.map((s) => s.x + s.w + GAP)];
+    const ys = [PAD.top, ...siblings.map((s) => s.y + s.h + GAP)];
+    const free = (x: number, y: number) =>
+      siblings.every(
+        (s) =>
+          x + size.w + GAP <= s.x ||
+          s.x + s.w + GAP <= x ||
+          y + size.h + GAP <= s.y ||
+          s.y + s.h + GAP <= y,
+      );
+    let best: { x: number; y: number; area: number } | null = null;
+    for (const y of [...new Set(ys)].sort((a, b) => a - b))
+      for (const x of [...new Set(xs)].sort((a, b) => a - b)) {
+        if (x < PAD.left || y < PAD.top || !free(x, y)) continue;
+        const w = Math.max(frame.w, x + size.w + PAD.right);
+        const h = Math.max(frame.h, y + size.h + PAD.bottom);
+        const area = w * h;
+        if (!best || area < best.area) best = { x, y, area };
+      }
+    // There is always a free spot: below every sibling, at the left padding.
+    const spot = best ?? { x: PAD.left, y: Math.max(PAD.top, ...ys) };
+    byId.set(n.id, { ...byId.get(n.id)!, position: { x: spot.x, y: spot.y } } as AnyNode);
+    todo.delete(n.id);
+    grow(parentId, spot.x + size.w + PAD.right, spot.y + size.h + PAD.bottom);
+  }
+  return nodes.map((n) => byId.get(n.id)!);
 }
 
 /**
