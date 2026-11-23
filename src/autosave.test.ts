@@ -88,6 +88,43 @@ describe("autosave", () => {
     expect(writeFile).toHaveBeenCalledTimes(1);
   });
 
+  it("never writes content that was not loaded from the file", async () => {
+    // The file is bound, but what is on screen never was its text: the
+    // previous document, say, landing after the file was opened.
+    stop();
+    useGraphStore.setState({ code: THREE, parseError: null });
+    useFileStore.setState({ path: "/w/b.mmd", savedCode: ONE });
+    stop = startAutosave();
+    await edit(TWO);
+    await advance(AUTOSAVE_MS * 3);
+    expect(writeFile).not.toHaveBeenCalled();
+
+    // Once the file's own text is on screen, edits of it are written again.
+    await edit(ONE);
+    await edit(TWO);
+    await advance(AUTOSAVE_MS);
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(writeFile.mock.calls[0][0]).toBe("/w/b.mmd");
+    expect(writeFile.mock.calls[0][1]).toBe(TWO);
+  });
+
+  it("never writes a load of other content that lands after the file", async () => {
+    // A slower load — the boot document — arriving after the file was shown.
+    const load = (code: string) =>
+      useGraphStore.setState((s) => ({ code, parseError: null, loads: s.loads + 1 }));
+    load(THREE);
+    await advance(AUTOSAVE_MS * 3);
+    await edit(TWO); // an edit of that content is still not the file's
+    await advance(AUTOSAVE_MS * 3);
+    expect(writeFile).not.toHaveBeenCalled();
+
+    load(ONE); // the file's own text again: edits of it are written
+    await edit(TWO);
+    await advance(AUTOSAVE_MS);
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(writeFile.mock.calls[0][1]).toBe(TWO);
+  });
+
   it("never writes a scratch document", async () => {
     await open(null);
     await edit(TWO);
