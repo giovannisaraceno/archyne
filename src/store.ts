@@ -1013,6 +1013,12 @@ export const useGraphStore = create<GraphState>((set, get) => {
       // line. A fresh document has not been rearranged, whatever the previous
       // one was — see the note on `lastArranged`.
       if (!opts?.editing) set({ lastArranged: null });
+      // Anything but the editor's own re-parse replaces what is on screen, so
+      // a re-parse still waiting on typing is about text that is no longer
+      // there. Left to fire, it put the typed text into the tab switched to
+      // (or over the document just loaded). The typed text itself is not
+      // lost: it is already the code, and a switch stores it with its tab.
+      if (!opts?.editing) clearTimeout(parseTimer);
       const seq = ++applySeq;
       const superseded = () => seq !== applySeq;
       try {

@@ -423,3 +423,43 @@ describe("the order of the strip", () => {
     expect(names()).toEqual(["Untitled 10", "alpha", "beta"]);
   });
 });
+
+describe("a re-parse scheduled by typing", () => {
+  const TYPED = `flowchart TD\n  a["Typed"] --> b["B"]\n`;
+  /** Longer than the editor's 400 ms re-parse delay. */
+  const pastReparse = () => new Promise((r) => setTimeout(r, 600));
+
+  it("does not land in the tab switched to within the delay", async () => {
+    await boot();
+    const [first] = documentList();
+    await useGraphStore.getState().applyCode(FLOWCHART, { record: false });
+    const second = await createDoc();
+    await useGraphStore.getState().applyCode(OTHER, { record: false });
+    await switchTo(first.id);
+
+    useGraphStore.getState().setCodeFromEditor(TYPED);
+    await switchTo(second);
+    await pastReparse();
+
+    expect(useGraphStore.getState().code).toBe(OTHER);
+    expect(useGraphStore.getState().nodes.map((n) => n.data.label)).toEqual(["X", "Y"]);
+    // What was typed is kept, in the tab it was typed into.
+    await switchTo(first.id);
+    expect(useGraphStore.getState().code).toBe(TYPED);
+  });
+
+  it("does not replace a document loaded within the delay", async () => {
+    await boot();
+    useGraphStore.getState().setCodeFromEditor(TYPED);
+    await useGraphStore.getState().applyCode(OTHER, { record: false });
+    await pastReparse();
+    expect(useGraphStore.getState().code).toBe(OTHER);
+  });
+
+  it("still re-parses what was typed when nothing else happens", async () => {
+    await boot();
+    useGraphStore.getState().setCodeFromEditor(TYPED);
+    await pastReparse();
+    expect(useGraphStore.getState().nodes.map((n) => n.data.label)).toContain("Typed");
+  });
+});
