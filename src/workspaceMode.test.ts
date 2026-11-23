@@ -1,8 +1,24 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useGraphStore, loadInitialCode } from "./store";
 import { useFileStore } from "./files";
 import { adoptBackgroundFileHere, adoptFileHere } from "./documents";
 import { DOC_PREFIX, INDEX_KEY, loadWorkspace, useWorkspace } from "./workspace";
+import { AUTOSAVE_MS, startAutosave } from "./autosave";
+import { resetWatched, setBase } from "./diskWatch";
+
+// ELK is the slow step in a browser; under jsdom it is quick enough to hide
+// the race below. One test slows it down to the order a browser runs in.
+const layout = vi.hoisted(() => ({ delayMs: 0 }));
+vi.mock("./layout/autoLayout", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./layout/autoLayout")>();
+  return {
+    ...real,
+    autoLayout: async (...args: Parameters<typeof real.autoLayout>) => {
+      if (layout.delayMs) await new Promise((r) => setTimeout(r, layout.delayMs));
+      return real.autoLayout(...args);
+    },
+  };
+});
 
 const A = `flowchart TD\n  a["A"] --> b["B"]\n`;
 const B = `flowchart LR\n  x["X"] --> y["Y"]\n`;
@@ -108,5 +124,51 @@ describe("workspace mode", () => {
     expect(useWorkspace.getState().docs.find((d) => d.path)?.name).toBe("a.mmd");
     await adoptFileHere({ path: "/x/y/a.mmd", content: B });
     expect(useWorkspace.getState().docs.filter((d) => d.path === "/x/y/a.mmd").length).toBe(2);
+  });
+
+  it("loads a file with a positions line over the boot document, and autosave leaves it alone", async () => {
+    // The shape of `archyne --root <dir>` with `?file=<name>`: the app applies
+    // the document it had (no positions, so ELK runs) without waiting, while
+    // the shell hands over the file. The file skips ELK and used to finish
+    // first; the boot document then landed on top, under the file's path,
+    // and autosave wrote it over the file about a second later.
+    const withPos = `flowchart LR
+  a["Alpha"] --> b["Beta"]
+%% graph:positions {"a":{"x":0,"y":0},"b":{"x":200,"y":0}}
+`;
+    const path = `${ROOT}/with-pos.mmd`;
+    const writeFile = vi.fn(async () => ({ mtimeMs: 2 }));
+    (globalThis as { archyne?: unknown }).archyne = {
+      workspace: { root: ROOT, autosave: true },
+      writeFile,
+      statFile: async () => ({ mtimeMs: 1 }),
+    };
+    seed([{ id: "old", path: `${ROOT}/old.mmd` }]);
+    // A fresh page: nothing on screen yet, nothing bound.
+    useGraphStore.setState({ code: "", nodes: [], edges: [], parseError: null });
+    resetWatched();
+    const stop = startAutosave();
+    layout.delayMs = 200;
+    try {
+      const { state, code } = loadWorkspace(loadInitialCode());
+      useWorkspace.setState(state);
+      const booting = useGraphStore.getState().applyCode(code, { record: false });
+      const adopting = adoptFileHere({ path, content: withPos });
+      await Promise.all([booting, adopting]);
+      setBase(useWorkspace.getState().activeId, 1);
+
+      expect(useGraphStore.getState().code).toBe(withPos);
+      expect(useGraphStore.getState().nodes.map((n) => n.data.label)).toEqual([
+        "Alpha",
+        "Beta",
+      ]);
+      expect(useFileStore.getState().path).toBe(path);
+
+      await new Promise((r) => setTimeout(r, AUTOSAVE_MS + 300));
+      expect(writeFile).not.toHaveBeenCalled();
+    } finally {
+      layout.delayMs = 0;
+      stop();
+    }
   });
 });

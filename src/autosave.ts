@@ -36,6 +36,25 @@ export function startAutosave(): () => void {
   const paused = new Map<string, string | null>();
   /** savedCode values we set ourselves, so Cmd+S detection ignores them. */
   let ownSaved: string | null = null;
+  /**
+   * docId -> the path whose own content this document has shown on screen.
+   *
+   * A document may be written to a file only after it has held exactly that
+   * file's text (`code === savedCode`), and only while nothing but edits has
+   * changed it since, so every write descends from the file or from an edit
+   * of it. A load of anything else under that path — the previous document,
+   * the sample, a load that lost a race — drops the entry: it is not the
+   * file's to receive.
+   */
+  const synced = new Map<string, string>();
+  const noteSync = () => {
+    const { activeId } = useWorkspace.getState();
+    const { path, savedCode } = useFileStore.getState();
+    if (activeId && path && useGraphStore.getState().code === savedCode) {
+      synced.set(activeId, path);
+    }
+  };
+  noteSync();
 
   const clear = () => {
     if (timer) clearTimeout(timer);
@@ -66,6 +85,10 @@ export function startAutosave(): () => void {
     const savedCode = active ? file.savedCode : doc.savedCode;
     if (code === null || parseError !== null || code === savedCode) {
       dirty.delete(id); // never write what Mermaid cannot read, or what is already saved
+      return false;
+    }
+    if (synced.get(id) !== path) {
+      dirty.delete(id); // never loaded from this file: not ours to write there
       return false;
     }
     if (paused.has(id)) {
@@ -125,7 +148,15 @@ export function startAutosave(): () => void {
   const unsubCode = useGraphStore.subscribe((s, prev) => {
     const { activeId } = useWorkspace.getState();
     if (activeId && s.parseError !== prev.parseError) parseErrors.set(activeId, s.parseError);
+    // A load is not an edit: if what it put on screen is not the bound
+    // file's text, this document no longer descends from that file.
+    if (activeId && s.loads !== prev.loads) {
+      const { path, savedCode } = useFileStore.getState();
+      if (path && s.code === savedCode) synced.set(activeId, path);
+      else synced.delete(activeId);
+    }
     if (s.code === prev.code) return;
+    noteSync();
     if (activeId) {
       parseErrors.set(activeId, s.parseError);
       dirty.add(activeId);
@@ -143,6 +174,7 @@ export function startAutosave(): () => void {
   // Cmd+S writes without a base: pick up the new mtime so the next autosave
   // is not mistaken for a conflict with our own save.
   const unsubSaved = useFileStore.subscribe((s, prev) => {
+    noteSync();
     if (s.savedCode === prev.savedCode) return;
     if (s.savedCode === ownSaved) return;
     const { activeId } = useWorkspace.getState();

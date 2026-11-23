@@ -304,6 +304,13 @@ export interface GraphState {
   /** False until the first diagram has been parsed and laid out. */
   booted: boolean;
   /**
+   * How many documents `applyCode` has loaded — put on screen from somewhere
+   * else (the boot copy, a file, the disk, a host) rather than produced by an
+   * edit. Autosave reads it to tell the two apart: a load that is not the
+   * bound file's own text must never be written to that file.
+   */
+  loads: number;
+  /**
    * True while the diagram is being rearranged. Arranging runs the layout
    * engine, which takes its time on a large file — the canvas shows it as
    * work in progress so a slow drawing does not look like a dead one.
@@ -406,6 +413,12 @@ export interface GraphState {
        * disk — and there the last picture belongs to something else.
        */
       editing?: boolean;
+      /**
+       * The text is the user's own work rather than a load: an undo, a redo,
+       * a new diagram, an accepted AI change, or a tab's working copy coming
+       * back on screen. Leaves `loads` alone.
+       */
+      edit?: boolean;
     },
   ) => Promise<void>;
   /**
@@ -603,6 +616,18 @@ export interface GraphState {
 }
 
 let parseTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * How many `applyCode` calls have started. Each call keeps its own number and
+ * lands only if no later call has started while it was parsing or laying out.
+ *
+ * Without it the call that *finished* last won, not the one that started
+ * last. At boot the app applies the last document it had while the shell
+ * hands over the file it was opened on; a file with a positions line skips
+ * ELK and finishes first, and the slower boot document then replaced it on
+ * screen — under the file's path, for autosave to write over it.
+ */
+let applySeq = 0;
 
 /** Write the active document's source, and note that it changed. */
 function persist(code: string) {
@@ -939,6 +964,7 @@ export const useGraphStore = create<GraphState>((set, get) => {
     canUndo: false,
     canRedo: false,
     booted: false,
+    loads: 0,
     arranging: false,
     fitSeq: 0,
     lastArranged: null,
@@ -987,12 +1013,16 @@ export const useGraphStore = create<GraphState>((set, get) => {
       // line. A fresh document has not been rearranged, whatever the previous
       // one was — see the note on `lastArranged`.
       if (!opts?.editing) set({ lastArranged: null });
+      const seq = ++applySeq;
+      const superseded = () => seq !== applySeq;
       try {
         const parsed = await parseDiagram(code);
+        if (superseded()) return;
         let positions = opts?.forceLayout ? null : readPositions(code);
         let nodes = placeNodes(parsed.nodes, positions ?? {}, parsed.kind);
         if (!positions && parsed.kind !== "sequence") {
           positions = (await autoLayout(nodes, parsed.edges, parsed.direction)).positions;
+          if (superseded()) return;
           nodes = placeNodes(parsed.nodes, positions, parsed.kind);
         }
         // Carry the selection across the re-parse.
@@ -1045,9 +1075,13 @@ export const useGraphStore = create<GraphState>((set, get) => {
           parseError: null,
           unsupported: null,
           code,
+          ...(opts?.editing || opts?.edit ? {} : { loads: get().loads + 1 }),
         });
         persist(code);
       } catch (err) {
+        // A later call owns the screen now; this one's verdict is about
+        // a document that is no longer being shown.
+        if (superseded()) return;
         if (err instanceof UnsupportedDiagramError) {
           // Not an error from the user's point of view: the file is fine, we
           // just can't offer visual editing for it. Drop the stale graph so
@@ -1061,12 +1095,14 @@ export const useGraphStore = create<GraphState>((set, get) => {
             parseError: null,
             warning: null,
             code,
+            ...(opts?.editing || opts?.edit ? {} : { loads: get().loads + 1 }),
           });
           persist(code);
         } else {
           set({
             parseError: err instanceof Error ? err.message : String(err),
             code,
+            ...(opts?.editing || opts?.edit ? {} : { loads: get().loads + 1 }),
             // Both belong to the parse that last succeeded, and it was not
             // this one: a warning about the previous code reads as a warning
             // about this, and a read-only family left set would put the
@@ -1709,7 +1745,7 @@ export const useGraphStore = create<GraphState>((set, get) => {
     },
 
     newDiagram: (kind) => {
-      void get().applyCode(NEW_DIAGRAM[kind], { forceLayout: true, record: true });
+      void get().applyCode(NEW_DIAGRAM[kind], { forceLayout: true, record: true, edit: true });
     },
 
     undo: async () => {
@@ -1717,7 +1753,7 @@ export const useGraphStore = create<GraphState>((set, get) => {
       future.push(get().code);
       const prev = past.pop()!;
       syncHistoryFlags();
-      await get().applyCode(prev);
+      await get().applyCode(prev, { edit: true });
     },
 
     redo: async () => {
@@ -1725,7 +1761,7 @@ export const useGraphStore = create<GraphState>((set, get) => {
       past.push(get().code);
       const next = future.pop()!;
       syncHistoryFlags();
-      await get().applyCode(next);
+      await get().applyCode(next, { edit: true });
     },
 
     setAiOpen: (open) => set({ aiOpen: open }),
@@ -1823,7 +1859,7 @@ export const useGraphStore = create<GraphState>((set, get) => {
         // Applied *before* the turn is called done, and not after: a turn
         // that reports having landed while the canvas still holds the old
         // drawing is telling the reader something that is not yet true.
-        await get().applyCode(code, { record: true, forceLayout: true });
+        await get().applyCode(code, { record: true, forceLayout: true, edit: true });
         get().requestFit();
         // What changed, for the conversation to say and the canvas to show.
         const changes = await diagramChanges(before, code);
@@ -1883,7 +1919,7 @@ export const useGraphStore = create<GraphState>((set, get) => {
         aiHighlight: null,
       });
       void get()
-        .applyCode(back, { record: true, forceLayout: true })
+        .applyCode(back, { record: true, forceLayout: true, edit: true })
         .then(() => get().requestFit());
     },
 

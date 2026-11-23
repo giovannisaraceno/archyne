@@ -79,7 +79,10 @@ export async function switchTo(id: string): Promise<void> {
 
   useGraphStore.getState().swapHistory(activeId, id);
   adoptBinding(target);
-  await useGraphStore.getState().applyCode(readDocCode(id) ?? SAMPLE, { record: false });
+  // The tab's own working copy, edits and all: not a load from elsewhere.
+  await useGraphStore
+    .getState()
+    .applyCode(readDocCode(id) ?? SAMPLE, { record: false, edit: true });
 }
 
 /** Create a document and switch to it. Returns its id. */
