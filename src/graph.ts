@@ -8,7 +8,7 @@
  * `window` while it is evaluating, so a renderer could not call them without
  * booting the editor. Same reason `boxes.ts` exists.
  */
-import type { AnyNode, DiagramKind, FlowEdge } from "./model/types";
+import { isGroup, type AnyNode, type DiagramKind, type FlowEdge } from "./model/types";
 import type { PositionMap } from "./model/positions";
 import { boxOf } from "./boxes";
 import { readNodeStyles } from "./model/nodeStyle";
@@ -126,15 +126,19 @@ const GAP = 24;
  * and just below each sibling, tried in reading order (top to bottom, then
  * left to right). The first one that overlaps no sibling and fits inside the
  * group wins. If none fits, the free spot that grows the group least wins, and
- * the group — and every group around it — grows to hold it. Nothing that
- * already has a position moves.
+ * the group grows to hold it.
  *
  * Deepest children first, so a nested group that has to grow is at its final
  * size by the time it is placed in its own parent.
+ *
+ * A group that grew then pushes what it would cover out of its way — see
+ * `pushAside` — and its own parent grows to hold the result, innermost first.
+ * Nothing moves unless a group grew.
  */
 function placeInsideGroups(nodes: AnyNode[], pending: (n: AnyNode) => boolean): AnyNode[] {
   const todo = new Set(nodes.filter(pending).map((n) => n.id));
   if (todo.size === 0) return nodes;
+  const placedHere = new Set(todo);
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const depth = (n: AnyNode): number => {
     let d = 0;
@@ -145,7 +149,11 @@ function placeInsideGroups(nodes: AnyNode[], pending: (n: AnyNode) => boolean): 
     }
     return d;
   };
-  const order = nodes.filter((n) => todo.has(n.id)).sort((a, b) => depth(b) - depth(a));
+  const deepestFirst = (a: AnyNode, b: AnyNode) => depth(b) - depth(a);
+  const order = nodes.filter((n) => todo.has(n.id)).sort(deepestFirst);
+  const groups = nodes.filter(isGroup);
+  /** Each group's box as saved, before anything was placed in it. */
+  const original = new Map(groups.map((g) => [g.id, boxOf(g)]));
 
   const grow = (groupId: string, w: number, h: number) => {
     const g = byId.get(groupId)!;
@@ -153,18 +161,13 @@ function placeInsideGroups(nodes: AnyNode[], pending: (n: AnyNode) => boolean): 
     if (w <= b.w && h <= b.h) return;
     const width = Math.max(w, b.w);
     const height = Math.max(h, b.h);
-    const grown = {
+    byId.set(groupId, {
       ...g,
       style: { ...g.style, width, height },
       width,
       height,
       measured: undefined,
-    } as AnyNode;
-    byId.set(groupId, grown);
-    // The group may now stick out of its own parent: grow that one too.
-    if (g.parentId && byId.has(g.parentId) && !todo.has(groupId)) {
-      grow(g.parentId, b.x + width + PAD.right, b.y + height + PAD.bottom);
-    }
+    } as AnyNode);
   };
 
   for (const n of order) {
@@ -199,7 +202,101 @@ function placeInsideGroups(nodes: AnyNode[], pending: (n: AnyNode) => boolean): 
     todo.delete(n.id);
     grow(parentId, spot.x + size.w + PAD.right, spot.y + size.h + PAD.bottom);
   }
+
+  // Innermost first: a group that grew pushes its neighbours aside, and its
+  // parent then grows to hold the result, which may push at the next level.
+  for (const g of [...groups].sort(deepestFirst)) {
+    const was = original.get(g.id)!;
+    const now = boxOf(byId.get(g.id)!);
+    // A group placed here was put in free space at its final size: it
+    // covers nothing, so it has nothing to push.
+    if (!placedHere.has(g.id) && (now.w > was.w || now.h > was.h)) {
+      pushAside(byId, g.id, was, now);
+    }
+    const parentId = g.parentId;
+    if (parentId && byId.has(parentId)) {
+      let w = 0;
+      let h = 0;
+      for (const c of byId.values()) {
+        if (c.parentId !== parentId) continue;
+        const b = boxOf(c);
+        w = Math.max(w, b.x + b.w + PAD.right);
+        h = Math.max(h, b.y + b.h + PAD.bottom);
+      }
+      grow(parentId, w, h);
+    }
+  }
   return nodes.map((n) => byId.get(n.id)!);
+}
+
+type Rect4 = { x: number; y: number; w: number; h: number };
+
+/** Strict overlap: boxes that only touch do not overlap. */
+const overlap = (a: Rect4, b: Rect4) =>
+  a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+const inflate = (r: Rect4, by: number): Rect4 => ({
+  x: r.x - by,
+  y: r.y - by,
+  w: r.w + 2 * by,
+  h: r.h + 2 * by,
+});
+
+/**
+ * Move the siblings that a grown group would now cover out of its way: down
+ * by the growth in height, then right by the growth in width.
+ *
+ * What moves is what the new part of the group reaches (within the usual
+ * clearance) and did not already overlap — plus everything below (or right
+ * of) the first of those, so the part of the drawing past the group moves as
+ * a block and keeps its own spacing. Anything a moved item would then land
+ * on moves with it, and everything past that too, so no new overlap appears.
+ * A sibling beside the group that the growth does not reach stays put.
+ *
+ * Only the drawing changes: the positions line is rewritten when the user
+ * edits the diagram, as for every other render-time placement.
+ */
+function pushAside(byId: Map<string, AnyNode>, groupId: string, was: Rect4, now: Rect4) {
+  const scope = byId.get(groupId)!.parentId;
+  const siblings = [...byId.values()].filter((s) => s.parentId === scope && s.id !== groupId);
+
+  const pass = (axis: "x" | "y", delta: number, before: Rect4) => {
+    if (delta <= 0) return;
+    const box = new Map(siblings.map((s) => [s.id, boxOf(byId.get(s.id)!)]));
+    const reach = inflate(now, GAP);
+    const moved = new Set(
+      siblings
+        .filter((s) => overlap(box.get(s.id)!, reach) && !overlap(box.get(s.id)!, before))
+        .map((s) => s.id),
+    );
+    if (moved.size === 0) return;
+    const shifted = (r: Rect4): Rect4 => ({ ...r, [axis]: r[axis] + delta });
+    for (let changed = true; changed;) {
+      changed = false;
+      const from = Math.min(...[...moved].map((id) => box.get(id)![axis]));
+      for (const s of siblings) {
+        if (moved.has(s.id)) continue;
+        const b = box.get(s.id)!;
+        const landedOn = [...moved].some((id) => overlap(shifted(box.get(id)!), b));
+        if (b[axis] >= from || landedOn) {
+          moved.add(s.id);
+          changed = true;
+        }
+      }
+    }
+    for (const id of moved) {
+      const n = byId.get(id)!;
+      byId.set(id, {
+        ...n,
+        position: { ...n.position, [axis]: n.position[axis] + delta },
+      } as AnyNode);
+    }
+  };
+
+  // Down first, across the full new width; then right, over the old width
+  // and the full new height — what the first pass moved is already clear.
+  pass("y", now.h - was.h, { x: now.x, y: now.y, w: now.w, h: was.h });
+  pass("x", now.w - was.w, { x: now.x, y: now.y, w: was.w, h: now.h });
 }
 
 /**
