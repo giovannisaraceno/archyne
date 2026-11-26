@@ -664,3 +664,68 @@ describe("resizing a picture with no frame", () => {
     expect(node.style?.width).toBeUndefined();
   });
 });
+
+describe("requirement diagrams (SysML)", () => {
+  const REQS = `requirementDiagram
+  requirement speed {
+    text: "Go fast."
+  }
+  requirement brake {
+  }
+  element engine {
+    type: "block"
+  }
+
+  engine - satisfies -> speed
+  brake - derives -> speed
+`;
+
+  it("renames a requirement everywhere it is referred to", async () => {
+    // The name is the identifier in this family, so a rename that left the
+    // relationships alone would write them against a name that is gone.
+    await load(REQS);
+    useGraphStore.getState().updateNodeData("speed", { label: "Top speed" });
+    const s = useGraphStore.getState();
+    expect(s.nodes.map((n) => n.id)).toContain("Top speed");
+    expect(s.nodes.map((n) => n.id)).not.toContain("speed");
+    expect(s.edges.every((e) => e.target === "Top speed")).toBe(true);
+    expect(s.code).toContain('engine - satisfies -> "Top speed"');
+    expect(s.code).toContain('brake - derives -> "Top speed"');
+    expect(s.code).not.toMatch(/\bspeed \{/);
+  });
+
+  it("refuses a name another requirement already has, rather than merging them", async () => {
+    await load(REQS);
+    useGraphStore.getState().updateNodeData("brake", { label: "speed" });
+    const s = useGraphStore.getState();
+    const brake = s.nodes.find((n) => n.id === "brake");
+    expect(brake?.data.label).toBe("brake");
+    expect(s.nodes.filter((n) => n.id === "speed")).toHaveLength(1);
+  });
+
+  it("adds a requirement from the palette with a name of its own", async () => {
+    await load(REQS);
+    useGraphStore
+      .getState()
+      .addNode({ type: "requirement", reqType: "performanceRequirement" }, { x: 0, y: 0 });
+    const added = useGraphStore.getState().nodes.find((n) => n.id === "Requirement1");
+    expect(added?.data).toMatchObject({ reqType: "performanceRequirement" });
+    expect(useGraphStore.getState().code).toContain("performanceRequirement Requirement1 {");
+  });
+
+  it("names a duplicated or pasted requirement by its new id", async () => {
+    // The copy is saved under its new id, so showing the old name would
+    // change what the canvas says the next time the file is opened.
+    await load(REQS);
+    useGraphStore.getState().duplicateNode("speed");
+    let copy = useGraphStore.getState().nodes.find((n) => n.id === "speed_2");
+    expect(copy?.data.label).toBe("speed_2");
+
+    useGraphStore.getState().selectAll();
+    useGraphStore.getState().copySelection();
+    useGraphStore.getState().pasteClipboard();
+    copy = useGraphStore.getState().nodes.find((n) => n.id === "brake_2");
+    expect(copy?.data.label).toBe("brake_2");
+    expect(useGraphStore.getState().code).toContain("requirement brake_2 {");
+  });
+});

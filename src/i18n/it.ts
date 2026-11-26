@@ -13,6 +13,7 @@ export const messages: Messages = {
   "kind.sequence": "Diagramma di sequenza",
   "kind.architecture": "Architettura",
   "kind.c4": "Modello C4",
+  "kind.requirement": "Diagramma dei requisiti (SysML)",
 
   "toolbar.about": "Informazioni su Archyne e licenze",
   "toolbar.aboutTitle": "Informazioni e licenze",
@@ -67,6 +68,8 @@ export const messages: Messages = {
   "import.looksLike": "Sembra un diagramma {family}: viene convertito come diagramma di flusso",
   "import.dropped":
     "Alcuni elementi non hanno un equivalente Mermaid e sono stati esclusi ({count})",
+  "import.imagesEmbedded": "{count} immagini dal web ora viaggiano dentro il diagramma",
+  "import.imagesFailed": "{count} immagini non sono state scaricate e restano link al web",
   "import.unbound": "Arriva come {name}, non salvato. Il file scelto non viene toccato.",
   "import.cancel": "Annulla",
   "import.confirm": "Importa",
@@ -150,6 +153,8 @@ export const messages: Messages = {
   "item.subgraph": "Sottografo",
 
   "canvas.label": "Area di disegno",
+  "canvas.toolSelect": "Selezione — clic per la mano (V / H)",
+  "canvas.toolPan": "Mano — clic per la selezione (V / H, o tieni premuto Spazio)",
   "canvas.arranging": "Disposizione in corso…",
   "canvas.brokenTitle": "Questo diagramma non si può disegnare",
   "canvas.brokenBody":
@@ -234,6 +239,8 @@ export const messages: Messages = {
   "palette.sectionBase": "Di base",
   "palette.sectionPinned": "Recenti e preferiti",
   "palette.sectionCarried": "In questo diagramma",
+  "palette.sectionImported": "Icone importate",
+  "palette.removeImported": "Elimina {name} dalle icone salvate in questo browser",
   "palette.sectionVendor": "Icone dei fornitori",
   "palette.searchIcons": "Cerca fra oltre 13000 icone…",
   "item.compositeState": "Stato composito",
@@ -266,6 +273,8 @@ export const messages: Messages = {
   "edge.moveSegment": "Trascina per spostare questo tratto",
   "edge.moveLabel": "Trascina per spostare l'etichetta, doppio clic per rimetterla al centro",
   "edge.removeCorner": "Trascina per spostare, doppio clic per rimuovere",
+  "edge.moveEnd":
+    "Trascina su un altro nodo o punto di connessione per spostare questo estremo",
   "edge.cornerNamed":
     "Angolo {index} di {total}. Le frecce lo spostano, Maiusc per un passo più lungo, Canc lo rimuove.",
   "insp.corners": "Angoli",
@@ -302,6 +311,12 @@ export const messages: Messages = {
   "insp.elementType": "Tipo di elemento",
   "insp.description": "Descrizione",
   "insp.kind": "Tipo",
+  "insp.reqId": "Id del requisito",
+  "insp.risk": "Rischio",
+  "insp.verifyMethod": "Metodo di verifica",
+  "insp.docRef": "Riferimento documentale",
+  "insp.relationship": "Relazione",
+  "insp.reqUnset": "Non impostato",
   "insp.participantBox": "Partecipante (riquadro)",
   "insp.actorPerson": "Attore (persona)",
   "insp.annotations": "Annotazioni — ad esempio",
@@ -461,6 +476,10 @@ export const messages: Messages = {
   "shortcuts.cancel": "Annulla",
   "shortcuts.nudge": "Sposta di poco la selezione",
   "shortcuts.nudgeFar": "Sposta di più",
+  "shortcuts.toolSelect": "Strumento selezione",
+  "shortcuts.toolPan": "Strumento mano",
+  "shortcuts.panHold": "Sposta la tela finché lo tieni premuto",
+  "shortcuts.toolToggle": "Passa da selezione a mano",
   "shortcuts.commandPalette": "Palette dei comandi",
 
   "panel.tabOutline": "Struttura",
@@ -720,6 +739,24 @@ export const messages: Messages = {
     "L'autenticazione con certificato client richiede un certificato client: attivalo qui sotto.",
 
   "tpl.title": "Parti da un modello",
+  "req.requirement": "Requisito",
+  "req.functionalRequirement": "Requisito funzionale",
+  "req.interfaceRequirement": "Requisito di interfaccia",
+  "req.performanceRequirement": "Requisito prestazionale",
+  "req.physicalRequirement": "Requisito fisico",
+  "req.designConstraint": "Vincolo di progetto",
+  "req.element": "Elemento",
+  "tpl.sysmlRequirements": "Requisiti SysML",
+  "tpl.sysmlRequirementsDesc":
+    "Requisiti derivati e raffinati, soddisfatti da blocchi e verificati da test.",
+  "tpl.sysmlBdd": "Definizione di blocchi SysML",
+  "tpl.sysmlBddDesc": "Blocchi con parti, valori e porte, composti in un sistema.",
+  "tpl.sysmlStateMachine": "Macchina a stati SysML",
+  "tpl.sysmlStateMachineDesc":
+    "Le modalità operative di un sistema e gli eventi che le cambiano.",
+  "tpl.sysmlActivity": "Attività SysML",
+  "tpl.sysmlActivityDesc":
+    "Azioni, una decisione e un'unione, dal nodo iniziale a quello finale.",
   "tpl.blank": "Diagramma vuoto",
   "tpl.blankDesc": "Un {kind} vuoto da costruire da zero.",
   "tpl.open": "Modelli",

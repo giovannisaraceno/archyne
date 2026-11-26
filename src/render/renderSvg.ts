@@ -17,8 +17,8 @@
  *
  * ## What it does not do yet
  *
- * Every family Archyne edits: flowchart, state, ER, class, C4, architecture and
- * sequence. A kind it does not know is refused rather than half-drawn — see
+ * Every family Archyne edits: flowchart, state, ER, class, C4, architecture,
+ * sequence and requirement. A kind it does not know is refused rather than half-drawn — see
  * `SUPPORTED`.
  *
  * Labels are real `<text>`, wrapped and positioned here from measured widths
@@ -29,8 +29,8 @@
  * most PDF pipelines all drop it, leaving boxes with no words in them.
  */
 import { labelLines } from "../model/label";
-import { IMG_SIZE, labelSize } from "../model/types";
-import { styleProps } from "../model/nodeStyle";
+import { IMG_SIZE, labelSize, requirementRows } from "../model/types";
+import { readableLabel, styleProps } from "../model/nodeStyle";
 import {
   C4_TAGS,
   isGroup,
@@ -79,7 +79,7 @@ import { pointsAttr, shapeGeometry } from "./shapes";
 /**
  * The families that have a drawing here.
  *
- * All seven. The two that arrived last did so for reasons rather than for want
+ * All eight. The two before the requirement family did so for reasons rather than for want
  * of typing, and both are settled: an architecture service is an icon, and
  * icons now come in resolved through `RenderOptions.icons` so the emitter stays
  * pure and sync; a sequence diagram is not routed at all, and has its own
@@ -96,6 +96,7 @@ const SUPPORTED = new Set<DiagramKind>([
   "class",
   "c4",
   "architecture",
+  "requirement",
 ]);
 
 /** Whether this family has a drawing here, for callers deciding a route. */
@@ -186,10 +187,12 @@ function n(v: number): string {
  */
 function drawnStyle(node: AnyNode, classDefs: ClassDefs) {
   const data = node.data as { classes?: string[]; styles?: string[] };
-  return styleProps([
-    ...(data.classes ?? []).flatMap((c) => classDefs[c] ?? []),
-    ...(data.styles ?? []),
-  ]);
+  return readableLabel(
+    styleProps([
+      ...(data.classes ?? []).flatMap((c) => classDefs[c] ?? []),
+      ...(data.styles ?? []),
+    ]),
+  );
 }
 
 /**
@@ -209,6 +212,9 @@ function paintAttrs(s: ReturnType<typeof drawnStyle>, part: "fill" | "line" = "f
     // keeping only the theme colour here left a purple rim on a green cylinder.
     ...(part === "fill" && s.fill ? [`fill:${s.fill}`] : []),
     ...(s.stroke ? [`stroke:${s.stroke}`] : []),
+    // And its weight, as `--custom-stroke-width` gives it on the canvas: the
+    // thick ring of an imported end event was a hairline in the export.
+    ...(s.strokeWidth ? [`stroke-width:${s.strokeWidth}`] : []),
   ];
   return decls.length ? ` style="${esc(decls.join(";"))}"` : "";
 }
@@ -292,6 +298,11 @@ interface TextBlock {
   align: "start" | "middle";
   /** Extra attributes, for the odd line that is bold or dimmed. */
   attrs?: string;
+  /**
+   * A leading run of `text` drawn dimmed — a requirement row's `Id:` — so
+   * the value after it reads first. Same font, so the line measures the same.
+   */
+  dimPrefix?: string;
 }
 
 /**
@@ -312,19 +323,33 @@ function textStack(
   },
 ): string {
   const metrics = opts.metrics ?? textMetrics();
-  type Line = { text: string; font: FontSpec; attrs: string; h: number; ascent: number };
+  type Line = {
+    text: string;
+    font: FontSpec;
+    attrs: string;
+    h: number;
+    ascent: number;
+    dim?: string;
+  };
   const lines: Line[] = [];
 
   for (const block of blocks) {
+    let first = true;
     for (const raw of labelLines(block.text)) {
       for (const line of wrapText(raw, block.font, opts.width, metrics)) {
         const size = metrics.measure(line, block.font);
+        const dim =
+          first && block.dimPrefix && line.startsWith(block.dimPrefix)
+            ? block.dimPrefix
+            : undefined;
+        first = false;
         lines.push({
           text: line,
           font: block.font,
           attrs: block.attrs ?? "",
           h: size.height,
           ascent: size.ascent,
+          ...(dim ? { dim } : {}),
         });
       }
     }
@@ -345,9 +370,15 @@ function textStack(
       const baseline = y + l.ascent;
       y += l.h;
       const weight = l.font.weight ? ` font-weight="${l.font.weight}"` : "";
+      // The dimmed run is a tspan inside the line's own, so it inherits the
+      // line's font and fill and only takes the opacity the «stereotype»
+      // above it is drawn with.
+      const body = l.dim
+        ? `<tspan opacity="0.7">${esc(l.dim)}</tspan>${esc(l.text.slice(l.dim.length))}`
+        : esc(l.text);
       return (
         `<tspan x="${n(x)}" y="${n(baseline)}" font-size="${n(l.font.size)}"` +
-        ` font-family="${esc(l.font.family)}"${weight}${l.attrs}>${esc(l.text)}</tspan>`
+        ` font-family="${esc(l.font.family)}"${weight}${l.attrs}>${body}</tspan>`
       );
     })
     .join("");
@@ -547,7 +578,12 @@ function tableMarkup(
   for (const group of groups) {
     y += TABLE_ROWS.padY / 2;
     for (const rowBlock of group) {
-      const size = metrics.measure(rowBlock.text, rowBlock.font);
+      // Stepped by the lines `textStack` will actually draw, as the title is
+      // above: a row too wide for a box narrowed by hand wraps, and stepping
+      // by one line laid the next row over its second.
+      const height = labelLines(rowBlock.text)
+        .flatMap((raw) => wrapText(raw, rowBlock.font, rowWidth, metrics))
+        .reduce((sum, line) => sum + metrics.measure(line, rowBlock.font).height, 0);
       parts.push(
         textStack([rowBlock], {
           x: rowX,
@@ -556,7 +592,7 @@ function tableMarkup(
           metrics,
         }),
       );
-      y += size.height + TABLE_ROWS.rowPadY;
+      y += height + TABLE_ROWS.rowPadY;
     }
     y += TABLE_ROWS.padY / 2;
   }
@@ -721,6 +757,30 @@ function nodeInner(
           })),
         );
       return tableMarkup(w, h, title, groups, paint);
+    }
+    case "requirement": {
+      // Drawn as a class is: the kind in guillemets over the name, then one
+      // row per field — `RequirementNodeView`'s layout, which `measureNode`
+      // measured with the same helpers.
+      const heading = labelFace(custom, FONTS.tableTitle);
+      const row = labelFace(custom, FONTS.table);
+      const title: TextBlock[] = [
+        {
+          text: `«${node.data.reqType}»`,
+          font: FONTS.annotation,
+          align: "middle" as const,
+          attrs: ' opacity="0.7"',
+        },
+        { text: node.data.label, font: heading.font, align: "middle", attrs: heading.attrs },
+      ];
+      const rows = requirementRows(node.data).map(([k, v]) => ({
+        text: `${k}: ${v}`,
+        dimPrefix: `${k}:`,
+        font: row.font,
+        align: "start" as const,
+        attrs: row.attrs,
+      }));
+      return tableMarkup(w, h, title, rows.length ? [rows] : [], paint);
     }
     case "participant": {
       // The head only. Its lifeline belongs to the diagram rather than to the

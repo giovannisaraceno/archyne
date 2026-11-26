@@ -191,6 +191,15 @@ describe("what is in it", () => {
     expect(body?.getAttribute("fill")).toBeNull();
   });
 
+  it("draws a node's border as heavy as the diagram says", () => {
+    // An imported BPMN end event is the thick ring; it was a hairline here.
+    const heavy = shape("a", "End", 0, 0, { styles: ["stroke:#000", "stroke-width:3px"] });
+    const doc = parse(renderSvg([heavy], [], "flowchart"));
+    expect(doc.querySelector("rect.sf")?.getAttribute("style")).toBe(
+      "stroke:#000;stroke-width:3px",
+    );
+  });
+
   it("colours a node through a classDef it belongs to", () => {
     // `classDef hot …` + `class a hot` is how a flowchart colours a *set*, and
     // it used to be dropped entirely: the emitter read only `data.styles`.
@@ -525,5 +534,48 @@ describe("words with no box", () => {
     const boxed = { ...caption, style: { width: 100, height: 40 } } as AnyNode;
     const doc = parse(renderSvg([boxed], [], "flowchart"));
     expect(doc.querySelectorAll("tspan").length).toBe(2);
+  });
+});
+
+describe("a SysML requirement", () => {
+  it("draws its rows with the label set back and the value in full", async () => {
+    const { svg } = await render(
+      'requirementDiagram\n  requirement speed {\n    id: "R-1"\n    risk: high\n  }\n',
+    );
+    const doc = parse(svg);
+    const dimmed = [...doc.querySelectorAll('tspan[opacity="0.7"]')].map((t) => t.textContent);
+    // The «stereotype» was already dimmed; the row labels now are too.
+    expect(dimmed).toEqual(expect.arrayContaining(["«requirement»", "Id:", "Risk:"]));
+    const idRow = [...doc.querySelectorAll("tspan")].find((t) =>
+      t.textContent?.startsWith("Id:"),
+    );
+    // One line still, so it measures as it did: the value follows in the
+    // same tspan, at full strength.
+    expect(idRow?.textContent).toBe("Id: R-1");
+    expect(idRow?.getAttribute("opacity")).toBeNull();
+  });
+
+  it("puts the next row below a row that wrapped, not over it", () => {
+    // A box narrowed by hand wraps a long Text row; the Risk row has to
+    // start under its last line.
+    const node = {
+      id: "speed",
+      type: "requirement",
+      position: { x: 0, y: 0 },
+      style: { width: 180, height: 200 },
+      data: {
+        label: "speed",
+        reqType: "requirement",
+        text: "The drone shall reach its cruising speed within ten seconds of take-off",
+        risk: "High",
+        direction: "TB",
+      },
+    } as unknown as AnyNode;
+    const lines = [...parse(renderSvg([node], [], "requirement")).querySelectorAll("tspan[y]")];
+    const ys = lines.map((t) => Number(t.getAttribute("y")));
+    const risk = lines.findIndex((t) => t.textContent?.startsWith("Risk:"));
+    const text = lines.findIndex((t) => t.textContent?.startsWith("Text:"));
+    expect(risk - text).toBeGreaterThan(1); // the Text row did wrap
+    expect(ys[risk]).toBeGreaterThan(ys[risk - 1] + 10);
   });
 });

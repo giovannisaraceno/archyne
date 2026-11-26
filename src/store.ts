@@ -23,6 +23,7 @@ import type {
   NodeSeed,
   NoteNode,
   ParticipantNode,
+  RequirementNode,
   ServiceNode,
   ShapeNode,
   StateNode,
@@ -131,10 +132,15 @@ import { setCarriedIcons } from "./icons";
 import { useIconPack } from "./iconPack";
 import { removeSeqItemAt } from "./model/kinds/sequence";
 import { SEQ_SPACING, SEQ_TOP } from "./seqLayout";
-import { autoLayout, type Arrangement, type LayoutStyle } from "./layout/autoLayout";
+import {
+  autoLayout,
+  withRoutes,
+  type Arrangement,
+  type LayoutStyle,
+} from "./layout/autoLayout";
 import { useIconPrefs } from "./iconPrefs";
 import { EMBEDDED, loadWorkspace, touchActive, useWorkspace, writeDocCode } from "./workspace";
-import { carryWaypoints } from "./orthogonal";
+import { carryWaypoints, type Side } from "./orthogonal";
 
 /** Smallest a group may be, whether dragged or typed. */
 export const GROUP_MIN = { width: 140, height: 100 };
@@ -171,6 +177,33 @@ export { absoluteBoxes } from "./boxes";
 export { annotateParallel, placeNodes, withStoredLooks } from "./graph";
 import { absoluteBoxes, boxOf, type Box } from "./boxes";
 import { annotateParallel, placeNodes, withStoredLooks } from "./graph";
+import { cornersAfterMove } from "./reconnect";
+
+/**
+ * Mermaid's architecture renderer takes one connection per ordered pair of
+ * services; a second is refused with this rather than written.
+ */
+const onlyOneConnection = (source: string, target: string) =>
+  `mermaid's architecture renderer allows only one connection from ${source} to ${target} — edit the existing edge instead.`;
+
+/**
+ * A connection from a node to itself, in the two families whose own mermaid
+ * renderer makes a mess of one. Both accept it — it parses and it renders —
+ * but what comes out is an arrowhead and a label at the corner of the box
+ * rather than a loop. The file is right and Archyne draws the loop, so this
+ * is not a refusal: refusing valid mermaid is not ours to do, and it is the
+ * silent disagreement that is worth saying out loud.
+ *
+ * Said when one is made, not when a file carrying one is opened: an edge you
+ * did not just draw is not a decision waiting on you.
+ */
+const loopWarning = (kind: DiagramKind, source: string, target: string): string | null =>
+  source === target && (kind === "c4" || kind === "architecture")
+    ? `mermaid's ${kind === "c4" ? "C4" : "architecture"} renderer draws a connection from ${source} to itself as a stub at the corner of the node rather than as a loop — the file is valid, and Archyne draws the loop.`
+    : null;
+
+/** A face, as the letter an architecture diagram writes it with. */
+const ARCH_DIR: Record<Side, ArchDir> = { left: "L", right: "R", top: "T", bottom: "B" };
 
 /**
  * The space left between two nodes that aligning would otherwise overlap —
@@ -283,7 +316,64 @@ export const NEW_DIAGRAM: Record<DiagramKind, string> = {
   architecture:
     "architecture-beta\n  group vpc(cloud)[VPC]\n  service web(internet)[Web] in vpc\n  service db(database)[Database] in vpc\n\n  web:R --> L:db\n",
   c4: 'C4Context\n  title System Context\n  Person(user, "User")\n  System(app, "Application")\n\n  Rel(user, app, "Uses")\n',
+  requirement:
+    'requirementDiagram\n  requirement Need {\n    id: "1"\n    text: "The system shall do one thing."\n  }\n  element Design {\n    type: "block"\n  }\n\n  Design - satisfies -> Need\n',
 };
+
+/**
+ * A requirement's name as it can be written back: on one line, and with no
+ * double quote, which a quoted name in `requirementDiagram` cannot escape.
+ */
+function requirementName(label: string): string {
+  return label
+    .replace(/"/g, "'")
+    .replace(/\s*\n\s*/g, " ")
+    .trim();
+}
+
+/**
+ * Renames that change a requirement's identity, applied to the graph.
+ *
+ * In `requirementDiagram` the name is the identifier — there is no alias, as
+ * there is for a class or a state — so a requirement renamed on the canvas has
+ * to be renamed everywhere it is referred to, or the next save writes the
+ * relationships against a name that no longer exists. A name that is empty or
+ * already taken is refused rather than merged: two requirements with one name
+ * are one requirement to mermaid.
+ */
+export function renameRequirements(
+  nodes: AnyNode[],
+  edges: FlowEdge[],
+  renames: Array<[string, string]>,
+): { nodes: AnyNode[]; edges: FlowEdge[] } {
+  const map = new Map<string, string>();
+  const taken = new Set(nodes.map((n) => n.id));
+  for (const [from, label] of renames) {
+    const to = requirementName(label);
+    if (to === from) continue;
+    if (!to || taken.has(to)) {
+      map.set(from, from);
+      continue;
+    }
+    taken.delete(from);
+    taken.add(to);
+    map.set(from, to);
+  }
+  if (map.size === 0) return { nodes, edges };
+  const to = (id: string) => map.get(id) ?? id;
+  return {
+    nodes: nodes.map((n) =>
+      n.type === "requirement" && map.has(n.id)
+        ? ({ ...n, id: to(n.id), data: { ...n.data, label: to(n.id) } } as AnyNode)
+        : n,
+    ),
+    edges: edges.map((e) =>
+      map.has(e.source) || map.has(e.target)
+        ? { ...e, source: to(e.source), target: to(e.target) }
+        : e,
+    ),
+  };
+}
 
 export interface GraphState {
   code: string;
@@ -453,6 +543,21 @@ export interface GraphState {
   onNodesChange: (changes: NodeChange<AnyNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<FlowEdge>[]) => void;
   onConnect: (conn: Connection) => void;
+  /**
+   * Move one end of an existing connection to `node`. `side` pins it to that
+   * face; without one, the router chooses — except in an architecture
+   * diagram, where the face is part of the file and the caller always names
+   * one.
+   */
+  reconnectEdge: (
+    edgeId: string,
+    end: "source" | "target",
+    node: string,
+    side: Side | null,
+  ) => void;
+  /** True while the end of a connection is being dragged somewhere else. */
+  reconnecting: boolean;
+  setReconnecting: (on: boolean) => void;
   onNodeDragStop: (dragged?: AnyNode) => void;
   setNodeSize: (id: string, w: number, h: number, x: number, y: number) => void;
   /**
@@ -618,25 +723,35 @@ export interface GraphState {
 let parseTimer: ReturnType<typeof setTimeout> | undefined;
 
 /**
- * How many `applyCode` calls have started. Each call keeps its own number and
- * lands only if no later call has started while it was parsing or laying out.
+ * The document whose source the store holds — not always the active one.
  *
- * Without it the call that *finished* last won, not the one that started
- * last. At boot the app applies the last document it had while the shell
- * hands over the file it was opened on; a file with a positions line skips
- * ELK and finishes first, and the slower boot document then replaced it on
- * screen — under the file's path, for autosave to write over it.
+ * Opening a document sets it active at once and loads its source after, and
+ * loading takes a while: mermaid parses, a diagram with no positions is laid
+ * out, and on the first load of the page mermaid itself has to be fetched.
+ * Saving "the active document" in that window wrote whatever was on screen
+ * — nothing at all, just after a reload, or the document being left — into
+ * the one being opened or the one being left. A diagram was found empty in
+ * the morning that had been full the night before, and an imported page was
+ * empty the moment it arrived. Everything that saves the store's source now
+ * saves it to the document it was loaded for, and nothing saves it before it
+ * has been loaded for one.
  */
-let applySeq = 0;
+let loadedDoc: string | null = null;
 
-/** Write the active document's source, and note that it changed. */
-function persist(code: string) {
-  if (EMBEDDED) return;
-  const { activeId } = useWorkspace.getState();
-  if (!activeId) return;
-  writeDocCode(activeId, code);
-  touchActive();
+/** Which document the store's source belongs to, once one has been loaded. */
+export function codeOwner(): string | null {
+  return loadedDoc;
 }
+
+/** Write a document's source, and note that it changed. */
+function persist(code: string, doc: string | null = loadedDoc) {
+  if (EMBEDDED || !doc) return;
+  writeDocCode(doc, code);
+  if (doc === useWorkspace.getState().activeId) touchActive();
+}
+
+/** Each `applyCode` in turn, so one that a later one overtook can stand down. */
+let applySeq = 0;
 
 export function loadInitialCode(): string {
   let fromUrl: string | null = null;
@@ -653,7 +768,7 @@ export function loadInitialCode(): string {
   useWorkspace.setState(state);
 
   if (fromUrl) {
-    persist(fromUrl);
+    persist(fromUrl, state.activeId);
     return fromUrl;
   }
   return code;
@@ -679,7 +794,13 @@ function carryEdges(before: AnyNode[], after: AnyNode[], edges: FlowEdge[]): Flo
   const next = edges.map((e) => {
     const points = e.data?.points;
     if (!points || points.length === 0) return e;
-    const carried = carryWaypoints(points, shift(e.source), shift(e.target));
+    const carried = carryWaypoints(
+      points,
+      shift(e.source),
+      shift(e.target),
+      was.get(e.source),
+      was.get(e.target),
+    );
     if (carried === points) return e;
     touched = true;
     return { ...e, data: { ...(e.data ?? { label: "" }), points: carried } };
@@ -966,6 +1087,7 @@ export const useGraphStore = create<GraphState>((set, get) => {
     booted: false,
     loads: 0,
     arranging: false,
+    reconnecting: false,
     fitSeq: 0,
     lastArranged: null,
     c4Flavor: "C4Context",
@@ -1004,11 +1126,27 @@ export const useGraphStore = create<GraphState>((set, get) => {
       set({ code });
       persist(code);
       clearTimeout(parseTimer);
-      parseTimer = setTimeout(() => void get().applyCode(code, { editing: true }), 400);
+      // Read back for the document it was typed in, and only while that one
+      // is still on screen. Switching within the pause used to let it run
+      // anyway, for whichever document was active by then: it overtook that
+      // document's own load and saved the text typed in the other into it.
+      const doc = loadedDoc;
+      parseTimer = setTimeout(() => {
+        if (doc !== loadedDoc || doc !== (useWorkspace.getState().activeId || null)) return;
+        void get().applyCode(code, { editing: true });
+      }, 400);
     },
 
     applyCode: async (code, opts) => {
       if (opts?.record) record(get().code);
+      // The document this source is for: the one active now, when the load
+      // starts. Not when it ends — by then another may have been opened.
+      const doc = useWorkspace.getState().activeId || null;
+      const seq = ++applySeq;
+      // Overtaken by a later load — another document opened, or more typed —
+      // while this one was being parsed or laid out. Its result is stale and
+      // would land on the wrong document, so it is dropped.
+      const overtaken = () => seq !== applySeq;
       // This is a replacement only when it is not a re-parse of a half-typed
       // line. A fresh document has not been rearranged, whatever the previous
       // one was — see the note on `lastArranged`.
@@ -1019,16 +1157,14 @@ export const useGraphStore = create<GraphState>((set, get) => {
       // (or over the document just loaded). The typed text itself is not
       // lost: it is already the code, and a switch stores it with its tab.
       if (!opts?.editing) clearTimeout(parseTimer);
-      const seq = ++applySeq;
-      const superseded = () => seq !== applySeq;
       try {
         const parsed = await parseDiagram(code);
-        if (superseded()) return;
+        if (overtaken()) return;
         let positions = opts?.forceLayout ? null : readPositions(code);
         let nodes = placeNodes(parsed.nodes, positions ?? {}, parsed.kind);
         if (!positions && parsed.kind !== "sequence") {
           positions = (await autoLayout(nodes, parsed.edges, parsed.direction)).positions;
-          if (superseded()) return;
+          if (overtaken()) return;
           nodes = placeNodes(parsed.nodes, positions, parsed.kind);
         }
         // Carry the selection across the re-parse.
@@ -1083,11 +1219,10 @@ export const useGraphStore = create<GraphState>((set, get) => {
           code,
           ...(opts?.editing || opts?.edit ? {} : { loads: get().loads + 1 }),
         });
-        persist(code);
+        loadedDoc = doc;
+        persist(code, doc);
       } catch (err) {
-        // A later call owns the screen now; this one's verdict is about
-        // a document that is no longer being shown.
-        if (superseded()) return;
+        if (overtaken()) return;
         if (err instanceof UnsupportedDiagramError) {
           // Not an error from the user's point of view: the file is fine, we
           // just can't offer visual editing for it. Drop the stale graph so
@@ -1103,8 +1238,13 @@ export const useGraphStore = create<GraphState>((set, get) => {
             code,
             ...(opts?.editing || opts?.edit ? {} : { loads: get().loads + 1 }),
           });
-          persist(code);
+          loadedDoc = doc;
+          persist(code, doc);
         } else {
+          // Not saved: the text came from the document and is still in it.
+          // But it is that document's text the editor now shows, and what is
+          // typed into it from here belongs there.
+          loadedDoc = doc;
           set({
             parseError: err instanceof Error ? err.message : String(err),
             code,
@@ -1187,25 +1327,10 @@ export const useGraphStore = create<GraphState>((set, get) => {
         kind === "architecture" &&
         get().edges.some((e) => e.source === conn.source && e.target === conn.target)
       ) {
-        set({
-          warning: `mermaid's architecture renderer allows only one connection from ${conn.source} to ${conn.target} — edit the existing edge instead.`,
-        });
+        set({ warning: onlyOneConnection(conn.source, conn.target) });
         return;
       }
-      // A connection from a node to itself, in the two families whose own
-      // mermaid renderer makes a mess of one. Both accept it — it parses and
-      // it renders — but what comes out is an arrowhead and a label at the
-      // corner of the box rather than a loop. The file is right and Archyne
-      // draws the loop, so this is not a refusal: refusing valid mermaid is
-      // not ours to do, and it is the silent disagreement that is worth
-      // saying out loud.
-      //
-      // Said when one is made, not when a file carrying one is opened: an
-      // edge you did not just draw is not a decision waiting on you.
-      const loop =
-        conn.source === conn.target && (kind === "c4" || kind === "architecture")
-          ? `mermaid's ${kind === "c4" ? "C4" : "architecture"} renderer draws a connection from ${conn.source} to itself as a stub at the corner of the node rather than as a loop — the file is valid, and Archyne draws the loop.`
-          : null;
+      const loop = loopWarning(kind, conn.source, conn.target);
 
       const data = defaultEdgeData(kind);
       if (kind === "architecture" && data.arch) {
@@ -1233,6 +1358,53 @@ export const useGraphStore = create<GraphState>((set, get) => {
       // it triggers.
       regenerate();
     },
+
+    reconnectEdge: (edgeId, end, node, side) => {
+      const { kind, nodes, edges } = get();
+      const edge = edges.find((e) => e.id === edgeId);
+      if (!edge) return;
+      const source = end === "source" ? node : edge.source;
+      const target = end === "target" ? node : edge.target;
+      if (
+        kind === "architecture" &&
+        edges.some((e) => e.id !== edgeId && e.source === source && e.target === target)
+      ) {
+        set({ warning: onlyOneConnection(source, target) });
+        return;
+      }
+      const boxes = absoluteBoxes(nodes);
+      const kept = boxes.get(end === "source" ? target : source);
+      const moved = boxes.get(node);
+      if (!kept || !moved) return;
+
+      const data: FlowEdgeData = { ...(edge.data ?? { label: "" }) };
+      let handles: Pick<FlowEdge, "sourceHandle" | "targetHandle"> = {};
+      if (kind === "architecture" && data.arch) {
+        // The face is written into the file here, so it is the face, not a
+        // corner, that holds the end — and the corners go, having been laid
+        // out for the face it left.
+        const dir = ARCH_DIR[side ?? "right"];
+        data.arch = { ...data.arch, ...(end === "source" ? { lhsDir: dir } : { rhsDir: dir }) };
+        data.points = undefined;
+        handles = { sourceHandle: data.arch.lhsDir, targetHandle: data.arch.rhsDir };
+      } else {
+        const corners = cornersAfterMove(data.points ?? [], end, kept, moved, side);
+        data.points = corners.length > 0 ? corners : undefined;
+      }
+      const loop = loopWarning(kind, source, target);
+      set({
+        edges: annotateParallel(
+          kind,
+          edges.map((e) =>
+            e.id === edgeId ? presentEdge(kind, { ...e, source, target, ...handles, data }) : e,
+          ),
+        ),
+        ...(loop ? { warning: loop } : {}),
+      });
+      regenerate();
+    },
+
+    setReconnecting: (on) => set({ reconnecting: on }),
 
     onNodeDragStop: (dragged) => {
       // Draw.io-style reparenting: dropping a node inside a group joins it,
@@ -1600,6 +1772,19 @@ export const useGraphStore = create<GraphState>((set, get) => {
             data: {},
           } satisfies JunctionNode;
           break;
+        case "requirement": {
+          const element = seed.reqType === "element";
+          const id = freshId(element ? "Element" : "Requirement");
+          node = {
+            id,
+            type: "requirement",
+            position,
+            data: element
+              ? { label: id, reqType: "element", elementType: "block", direction }
+              : { label: id, reqType: seed.reqType, text: "The system shall …", direction },
+          } satisfies RequirementNode;
+          break;
+        }
         case "c4": {
           const id = freshId("el");
           node = {
@@ -1659,12 +1844,18 @@ export const useGraphStore = create<GraphState>((set, get) => {
       const key = opts?.burst ? `${[...byId.keys()].join(",")}:${opts.burst}` : null;
       const joins = key !== null && lastBurst?.key === key && now - lastBurst.at < 900;
       lastBurst = key ? { key, at: now } : null;
-      set({
-        nodes: get().nodes.map((n) => {
-          const patch = byId.get(n.id);
-          return patch ? ({ ...n, data: { ...n.data, ...patch } } as AnyNode) : n;
-        }),
+      let nodes = get().nodes.map((n) => {
+        const patch = byId.get(n.id);
+        return patch ? ({ ...n, data: { ...n.data, ...patch } } as AnyNode) : n;
       });
+      let edges = get().edges;
+      if (get().kind === "requirement") {
+        const renames = patches.flatMap(([id, patch]): Array<[string, string]> =>
+          typeof patch.label === "string" ? [[id, patch.label]] : [],
+        );
+        ({ nodes, edges } = renameRequirements(nodes, edges, renames));
+      }
+      set({ nodes, edges });
       regenerate({ record: !joins });
     },
 
@@ -1708,6 +1899,10 @@ export const useGraphStore = create<GraphState>((set, get) => {
 
     runAutoLayout: async (style = "auto") => {
       const { nodes, edges, direction, kind } = get();
+      // Arranging a large drawing takes seconds, and another document may be
+      // opened meanwhile: the arrangement is for this one, and dropped if it
+      // is no longer the one on screen when it is ready.
+      const doc = loadedDoc;
       set({ arranging: true });
       try {
         if (kind === "sequence") {
@@ -1720,15 +1915,27 @@ export const useGraphStore = create<GraphState>((set, get) => {
           set({ lastArranged: null });
           return;
         }
-        const { positions, arranged } = await autoLayout(nodes, edges, direction, style, kind);
-        // Corners go. A corner is layout — the store patches it back into the
-        // document through `repatchPositions` for that very reason — and
-        // rearranging replaces the layout. Kept, they stay at the coordinates
-        // they were dropped at while every node moves out from under them, so a
-        // connection sets off sideways to a point that means nothing any more
-        // and comes back: a visible spur to nowhere. Undo brings them back with
-        // the arrangement they belonged to.
-        applyPositions(positions, true);
+        const { positions, arranged, routes } = await autoLayout(
+          nodes,
+          edges,
+          direction,
+          style,
+          kind,
+        );
+        if (loadedDoc !== doc) return;
+        // The old corners go. A corner is layout — the store patches it back
+        // into the document through `repatchPositions` for that very reason —
+        // and rearranging replaces the layout. Kept, they stay at the
+        // coordinates they were dropped at while every node moves out from
+        // under them, so a connection sets off sideways to a point that means
+        // nothing any more and comes back: a visible spur to nowhere. Undo
+        // brings them back with the arrangement they belonged to.
+        //
+        // In their place, the corners the arrangement routed each line through,
+        // where it routed them (`autoLayout`): the boxes were placed so those
+        // lines would have room, and a line routed afresh went its own way.
+        set({ edges: withRoutes(get().edges, routes) });
+        applyPositions(positions, false);
         set({ lastArranged: arranged });
       } finally {
         set({ arranging: false });
@@ -1959,8 +2166,12 @@ export const useGraphStore = create<GraphState>((set, get) => {
       const newNodes = clipboard.nodes.map((n) => {
         const id = uniquify(n.id);
         idMap.set(n.id, id);
+        const copy = structuredClone(n);
+        // A requirement's name is its id: the copy is saved as `speed_2`,
+        // so it has to be shown as that too, not as the `speed` it came from.
+        if (copy.type === "requirement") copy.data.label = id;
         return {
-          ...structuredClone(n),
+          ...copy,
           id,
           parentId: undefined,
           extent: undefined,
@@ -2423,8 +2634,11 @@ export const useGraphStore = create<GraphState>((set, get) => {
       let i = 2;
       let newId = `${id}_${i}`;
       while (taken.has(newId)) newId = `${id}_${++i}`;
+      const clone = structuredClone(node);
+      // As in `pasteClipboard`: a requirement is named by its id.
+      if (clone.type === "requirement") clone.data.label = newId;
       const copy: AnyNode = {
-        ...structuredClone(node),
+        ...clone,
         id: newId,
         selected: true,
         position: {

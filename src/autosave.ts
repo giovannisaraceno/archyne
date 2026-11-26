@@ -9,7 +9,7 @@
  * its saved text changes (reload from disk, or Cmd+S).
  */
 import { desktopBridge, useFileStore } from "./files";
-import { useGraphStore } from "./store";
+import { codeOwner, useGraphStore } from "./store";
 import { patchDoc, readDocCode, useWorkspace } from "./workspace";
 import { getBase, markWritten, setBase } from "./diskWatch";
 import { toast } from "./toast";
@@ -78,6 +78,11 @@ export function startAutosave(): () => void {
       dirty.delete(id); // scratch document
       return false;
     }
+    // The tab is active but the store still holds another document: it is
+    // being opened, and its load has not landed. What is on screen belongs
+    // to the one before (see `codeOwner`); try again once the load is in.
+    const owner = codeOwner();
+    if (active && owner !== null && owner !== id) return true;
     const code = active ? useGraphStore.getState().code : readDocCode(id);
     const parseError = active
       ? useGraphStore.getState().parseError

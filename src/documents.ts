@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { useGraphStore, SAMPLE, NEW_DIAGRAM } from "./store";
+import { codeOwner, useGraphStore, SAMPLE, NEW_DIAGRAM } from "./store";
 import {
   decodeBase64,
   fileLabel,
@@ -42,7 +42,11 @@ function captureActive(): void {
   const { activeId } = useWorkspace.getState();
   if (!activeId) return;
   const { path, handle, savedCode, name } = useFileStore.getState();
-  writeDocCode(activeId, useGraphStore.getState().code);
+  // Only when what is on screen is this document. Just after a reload, or
+  // while a document is still being opened, the store holds nothing yet or
+  // the one being left — and writing that here emptied a diagram, or
+  // replaced it with its neighbour (see `codeOwner`).
+  if (codeOwner() === activeId) writeDocCode(activeId, useGraphStore.getState().code);
   patchDoc(activeId, {
     path,
     handle,
@@ -336,6 +340,11 @@ export async function placeOpened(
 
   const label = file.path ? fileLabel(file.path) : file.name;
   await useGraphStore.getState().applyCode(file.content, { record: true });
+  // Shown whole. The canvas fits itself once, when it first appears, and a
+  // file opened after that came up wherever the last one had been left: an
+  // imported page drawn three thousand units wide showed a corner of itself
+  // at full size, boxes cut off at every edge.
+  useGraphStore.getState().requestFit();
   useFileStore.setState({
     name: label,
     path: file.path,

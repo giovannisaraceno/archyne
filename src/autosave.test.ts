@@ -6,6 +6,15 @@ import { useFileStore } from "./files";
 import { INDEX_KEY, useWorkspace, writeDocCode } from "./workspace";
 import { useToasts } from "./toast";
 
+// The document the store's source belongs to. `null` (nothing loaded through
+// applyCode, as in these tests) leaves autosave as it was; a test sets it to
+// model a tab that is active while another document's text is on screen.
+const owner = vi.hoisted(() => ({ id: null as string | null }));
+vi.mock("./store", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./store")>()),
+  codeOwner: () => owner.id,
+}));
+
 const ONE = 'flowchart TD\n  a["One"] --> b["Two"]\n';
 const TWO = 'flowchart TD\n  a["Changed"] --> b["Two"]\n';
 const THREE = 'flowchart TD\n  a["Third"] --> b["Two"]\n';
@@ -52,6 +61,7 @@ beforeEach(async () => {
   installBridge();
   await open("/w/a.mmd");
   setBase("d1", 1000);
+  owner.id = null;
   stop = startAutosave();
 });
 
@@ -224,6 +234,18 @@ describe("autosave across tabs and unknown base", () => {
     expect(baseOf(0)).toBe(1000);
     expect(useWorkspace.getState().docs.find((d) => d.id === "d1")?.savedCode).toBe(TWO);
     expect(useWorkspace.getState().docs.find((d) => d.id === "d2")?.savedCode).toBe(ONE);
+  });
+
+  it("waits while the active tab's load has not landed, and writes once it has", async () => {
+    await edit(TWO);
+    owner.id = "d0"; // the store still holds the document opened before d1
+    await advance(AUTOSAVE_MS * 3);
+    expect(writeFile).not.toHaveBeenCalled();
+    owner.id = "d1";
+    await advance(AUTOSAVE_MS * 3);
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(writeFile.mock.calls[0][0]).toBe("/w/a.mmd");
+    expect(writeFile.mock.calls[0][1]).toBe(TWO);
   });
 
   it("never writes without a base, and writes within 3 s once one is known", async () => {

@@ -1,13 +1,15 @@
 import { type NodeProps } from "@xyflow/react";
 import { Label } from "./Label";
-import type { ClassNode, EntityNode, StateNode } from "../model/types";
+import type { ClassNode, EntityNode, RequirementNode, StateNode } from "../model/types";
+import { requirementRows } from "../model/types";
 import { NodeResize } from "./NodeResize";
 import { useSized } from "./useSized";
 
 import { SideHandles } from "./SideHandles";
 import { useRename } from "./useRename";
-import { boxStyleOf, labelStyleOf, styleProps } from "../model/nodeStyle";
+import { boxStyleOf, labelStyleOf, readableLabel, styleProps } from "../model/nodeStyle";
 import { edgeColors, useThemeStore } from "../theme";
+import { useGraphStore } from "../store";
 import { markerDefs } from "../render/markers";
 
 export function StateNodeView({ id, data, selected }: NodeProps<StateNode>) {
@@ -50,7 +52,7 @@ function NormalState({
 }) {
   const rename = useRename(id, data.label, {
     multiline: true,
-    style: labelStyleOf(styleProps(data.styles ?? [])),
+    style: labelStyleOf(readableLabel(styleProps(data.styles ?? []))),
   });
   return (
     <SizedBox
@@ -91,7 +93,7 @@ function SizedBox({
   return (
     <div
       className={`${className}${selected ? " selected" : ""}${sized ? " sized" : ""}`}
-      style={boxStyleOf(styleProps(styles ?? []))}
+      style={boxStyleOf(readableLabel(styleProps(styles ?? [])))}
       onDoubleClick={onDoubleClick}
     >
       <NodeResize id={id} visible={selected} />
@@ -154,6 +156,52 @@ export function ClassNodeView({ id, data, selected }: NodeProps<ClassNode>) {
           {data.methods.map((m, i) => (
             <div key={i} className="table-row mono">
               {m}
+            </div>
+          ))}
+        </div>
+      )}
+      <SideHandles />
+    </SizedBox>
+  );
+}
+
+/**
+ * A SysML requirement or element, drawn as SysML draws it: the kind in
+ * guillemets over the name, and the fields beneath as `Label: value` rows.
+ *
+ * The labels stay in English on purpose. They are SysML's own vocabulary —
+ * `Id`, `Text`, `Risk` — as mermaid draws them in every rendering of the
+ * same file, and an export that changed its words with the editor's locale
+ * would disagree with the diagram everyone else sees.
+ */
+export function RequirementNodeView({ id, data, selected }: NodeProps<RequirementNode>) {
+  // The name only: renaming one renames it everywhere it is referred to,
+  // which the store does when the edit is committed.
+  const rename = useRename(id, data.label, { multiline: false });
+  const rows = requirementRows(data);
+  // A class's colours first, then the node's own, as `ShapeNodeView` reads
+  // them: the parser took the class's declarations out of `styles`, so that
+  // leaving the class does not leave its colours behind.
+  const classDefs = useGraphStore((s) => s.classDefs);
+  const styles = [
+    ...(data.classes ?? []).flatMap((c) => classDefs[c] ?? []),
+    ...(data.styles ?? []),
+  ];
+  return (
+    <SizedBox id={id} className="table-node" selected={selected} styles={styles}>
+      <div className="table-title" onDoubleClick={rename.begin}>
+        <div className="class-annotation">«{data.reqType}»</div>
+        {rename.editing ? rename.field : <Label text={data.label} />}
+      </div>
+      {rows.length > 0 && (
+        <div className="table-rows">
+          {rows.map(([k, v]) => (
+            <div key={k} className="table-row">
+              {/* One flex child, not two: a second would add the row's gap
+                  and the line would no longer be the width measured for it. */}
+              <span>
+                <span className="req-key">{k}:</span> {v}
+              </span>
             </div>
           ))}
         </div>

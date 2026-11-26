@@ -26,6 +26,10 @@ import {
   IMG_SIZE,
   LABEL_SIZE,
   labelSize,
+  REQ_RELATIONS,
+  REQ_RISKS,
+  REQ_TYPES,
+  REQ_VERIFY,
   SEQ_OPS,
   SEQ_OP_LABELS,
   SHAPES,
@@ -39,6 +43,7 @@ import {
   type EntityAttr,
   type ErCard,
   type FlowEdge,
+  type ReqRelation,
   type SeqOp,
   type Shape,
 } from "../model/types";
@@ -63,6 +68,21 @@ function attrToLine(a: EntityAttr): string {
 }
 
 /** Set or replace one `key:value` declaration in a style list. */
+/**
+ * The annotations typed into a class's field, one per word.
+ *
+ * Split on whitespace — it once split on the letter `s` (`/s+/`, the backslash
+ * lost), so `interfaceBlock` came back as `interface` and `Block`. Brackets a
+ * user types out of habit are taken off: the serializer writes `<<…>>` itself,
+ * and `<<block>>` would otherwise be written back as `<<<<block>>>>`.
+ */
+function parseAnnotations(text: string): string[] {
+  return text
+    .split(/\s+/)
+    .map((a) => a.replace(/^(<<|«)+|(>>|»)+$/g, ""))
+    .filter(Boolean);
+}
+
 function withStyle(styles: string[] | undefined, key: string, value: string): string[] {
   const rest = (styles ?? []).filter((s) => !s.trim().startsWith(`${key}:`));
   return [...rest, `${key}:${value}`];
@@ -120,6 +140,7 @@ function isStyled(n: AnyNode, kind: DiagramKind): n is Styled {
     n.type === "state" ||
     n.type === "entity" ||
     n.type === "class" ||
+    n.type === "requirement" ||
     // A flowchart subgraph takes a `style` statement as a node does; the
     // other families' containers have none to write.
     (n.type === "group" && kind === "flowchart")
@@ -290,6 +311,14 @@ function NodeFields({ node }: { node: AnyNode }) {
               rows={labelToText(node.data.label).split("\n").length}
               value={labelToText(node.data.label)}
               onChange={(e) => updateNodeData(node.id, { label: textToLabel(e.target.value) })}
+              // The field is controlled and re-renders from the store on every
+              // keystroke, so the per-line trim `textToLabel` used to do would
+              // take a space between two words before the next character was
+              // typed. Trimming waits for the blur instead.
+              onBlur={(e) => {
+                const next = textToLabel(e.target.value.trim());
+                if (next !== node.data.label) updateNodeData(node.id, { label: next });
+              }}
             />
           </label>
           <label>
@@ -533,7 +562,7 @@ function NodeFields({ node }: { node: AnyNode }) {
               defaultValue={(node.data.annotations ?? []).join(" ")}
               onBlur={(e) =>
                 updateNodeData(node.id, {
-                  annotations: e.target.value.split(/s+/).filter(Boolean),
+                  annotations: parseAnnotations(e.target.value),
                 })
               }
             />
@@ -566,6 +595,117 @@ function NodeFields({ node }: { node: AnyNode }) {
           <NodeSize node={node} />
         </>
       );
+    case "requirement": {
+      const d = node.data;
+      const element = d.reqType === "element";
+      /** A free-text field, committed on leaving it; empty means absent. */
+      const field = (key: "reqId" | "text" | "elementType" | "docRef", label: string) => (
+        <label>
+          {label}
+          <input
+            key={`${key}-${node.id}`}
+            defaultValue={d[key] ?? ""}
+            onBlur={(e) =>
+              updateNodeData(node.id, { [key]: e.target.value.trim() || undefined })
+            }
+          />
+        </label>
+      );
+      return (
+        <>
+          <label>
+            {t("insp.name")}
+            <input
+              id="inspector-label"
+              // Uncontrolled and committed on blur: the name is the identity,
+              // and renaming it renames every relationship that points at it,
+              // so it changes once, not on every keystroke.
+              key={`name-${node.id}`}
+              defaultValue={d.label}
+              onBlur={(e) => {
+                updateNodeData(node.id, { label: e.target.value });
+                // A refused rename — empty, or a name already taken — leaves
+                // the node as it was, and with it this field's key, so the
+                // field would keep showing the name that was not taken. A
+                // rename that went through changes the id and remounts it.
+                const kept = useGraphStore.getState().nodes.find((n) => n.id === node.id);
+                if (kept) e.target.value = String(kept.data.label);
+              }}
+            />
+          </label>
+          <label>
+            {t("insp.kind")}
+            <select
+              value={d.reqType}
+              onChange={(e) => updateNodeData(node.id, { reqType: e.target.value })}
+            >
+              {REQ_TYPES.map((r) => (
+                <option key={r} value={r}>
+                  {t(`req.${r}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {element ? (
+            <>
+              {field("elementType", t("insp.elementType"))}
+              {field("docRef", t("insp.docRef"))}
+            </>
+          ) : (
+            <>
+              {field("reqId", t("insp.reqId"))}
+              <label>
+                {t("insp.text")}
+                <textarea
+                  key={`text-${node.id}`}
+                  rows={3}
+                  defaultValue={d.text ?? ""}
+                  onBlur={(e) =>
+                    updateNodeData(node.id, {
+                      text: e.target.value.replace(/\s*\n\s*/g, " ").trim() || undefined,
+                    })
+                  }
+                />
+              </label>
+              <label>
+                {t("insp.risk")}
+                <select
+                  value={d.risk ?? ""}
+                  onChange={(e) =>
+                    updateNodeData(node.id, { risk: e.target.value || undefined })
+                  }
+                >
+                  <option value="">{t("insp.reqUnset")}</option>
+                  {REQ_RISKS.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {t("insp.verifyMethod")}
+                <select
+                  value={d.verifyMethod ?? ""}
+                  onChange={(e) =>
+                    updateNodeData(node.id, { verifyMethod: e.target.value || undefined })
+                  }
+                >
+                  <option value="">{t("insp.reqUnset")}</option>
+                  {REQ_VERIFY.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+          <StyleRow nodes={[node]} />
+          <NodeSize node={node} />
+        </>
+      );
+    }
     case "group":
       return (
         <>
@@ -804,14 +944,35 @@ function EdgeFields({ edge }: { edge: FlowEdge }) {
 
   return (
     <>
-      <label>
-        {t("insp.label")}
-        <input
-          id="inspector-label"
-          value={d.label}
-          onChange={(e) => updateEdgeData(edge.id, { label: e.target.value })}
-        />
-      </label>
+      {d.req ? (
+        // A requirement relationship has no text of its own: the
+        // relationship is what is written on the line.
+        <label>
+          {t("insp.relationship")}
+          <select
+            id="inspector-label"
+            value={d.req.rel}
+            onChange={(e) =>
+              updateEdgeData(edge.id, { req: { rel: e.target.value as ReqRelation } })
+            }
+          >
+            {REQ_RELATIONS.map((r) => (
+              <option key={r} value={r}>
+                «{r}»
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <label>
+          {t("insp.label")}
+          <input
+            id="inspector-label"
+            value={d.label}
+            onChange={(e) => updateEdgeData(edge.id, { label: e.target.value })}
+          />
+        </label>
+      )}
       {d.seq && (
         <>
           <label>

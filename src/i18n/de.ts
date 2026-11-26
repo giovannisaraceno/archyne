@@ -12,6 +12,7 @@ export const messages: Messages = {
   "kind.sequence": "Sequenzdiagramm",
   "kind.architecture": "Architektur",
   "kind.c4": "C4-Modell",
+  "kind.requirement": "Anforderungsdiagramm (SysML)",
 
   "toolbar.about": "Über Archyne und Lizenzen",
   "toolbar.aboutTitle": "Über & Lizenzen",
@@ -66,6 +67,8 @@ export const messages: Messages = {
   "import.looksLike":
     "Das sieht nach einem {family}-Diagramm aus; konvertiert wird ein Flussdiagramm",
   "import.dropped": "Einige Elemente haben keine Mermaid-Entsprechung und fehlen ({count})",
+  "import.imagesEmbedded": "{count} Bilder aus dem Web sind jetzt im Diagramm enthalten",
+  "import.imagesFailed": "{count} Bilder konnten nicht geladen werden und bleiben Web-Links",
   "import.unbound": "Kommt als {name} an, ungespeichert. Die gewählte Datei bleibt unberührt.",
   "import.cancel": "Abbrechen",
   "import.confirm": "Importieren",
@@ -149,6 +152,8 @@ export const messages: Messages = {
   "item.subgraph": "Teilgraph",
 
   "canvas.label": "Diagrammfläche",
+  "canvas.toolSelect": "Auswahl — klicken für die Hand (V / H)",
+  "canvas.toolPan": "Hand — klicken für die Auswahl (V / H, oder Leertaste halten)",
   "canvas.arranging": "Das Diagramm wird angeordnet…",
   "canvas.brokenTitle": "Dieses Diagramm lässt sich nicht zeichnen",
   "canvas.brokenBody":
@@ -235,6 +240,8 @@ export const messages: Messages = {
   "palette.sectionBase": "Basis",
   "palette.sectionPinned": "Zuletzt & Favoriten",
   "palette.sectionCarried": "Symbole dieses Diagramms",
+  "palette.sectionImported": "Importierte Symbole",
+  "palette.removeImported": "{name} aus den in diesem Browser gespeicherten Symbolen entfernen",
   "palette.sectionVendor": "Hersteller-Symbole",
   "palette.searchIcons": "Über 13000 Symbole durchsuchen…",
   "item.compositeState": "Zusammengesetzter Zustand",
@@ -268,6 +275,8 @@ export const messages: Messages = {
   "edge.moveSegment": "Ziehen, um diesen Abschnitt zu verschieben",
   "edge.moveLabel": "Ziehen, um die Beschriftung zu verschieben; Doppelklick setzt sie zurück",
   "edge.removeCorner": "Ziehen zum Verschieben, Doppelklick zum Entfernen",
+  "edge.moveEnd":
+    "Auf einen anderen Knoten oder Verbindungspunkt ziehen, um dieses Ende zu verschieben",
   "edge.cornerNamed":
     "Knick {index} von {total}. Pfeiltasten verschieben ihn, mit Umschalt weiter, Entf entfernt ihn.",
   "insp.corners": "Knicke",
@@ -304,6 +313,12 @@ export const messages: Messages = {
   "insp.elementType": "Elementtyp",
   "insp.description": "Beschreibung",
   "insp.kind": "Art",
+  "insp.reqId": "Anforderungs-ID",
+  "insp.risk": "Risiko",
+  "insp.verifyMethod": "Verifikationsmethode",
+  "insp.docRef": "Dokumentverweis",
+  "insp.relationship": "Beziehung",
+  "insp.reqUnset": "Nicht gesetzt",
   "insp.participantBox": "Teilnehmer (Kasten)",
   "insp.actorPerson": "Akteur (Person)",
   "insp.annotations": "Annotationen — z. B.",
@@ -463,6 +478,10 @@ export const messages: Messages = {
   "shortcuts.cancel": "Abbrechen",
   "shortcuts.nudge": "Auswahl verschieben",
   "shortcuts.nudgeFar": "Weiter verschieben",
+  "shortcuts.toolSelect": "Auswahlwerkzeug",
+  "shortcuts.toolPan": "Handwerkzeug",
+  "shortcuts.panHold": "Fläche verschieben, solange gedrückt",
+  "shortcuts.toolToggle": "Zwischen Auswahl und Hand wechseln",
   "shortcuts.commandPalette": "Befehlspalette",
 
   "panel.tabOutline": "Übersicht",
@@ -727,6 +746,24 @@ export const messages: Messages = {
     "Die Authentifizierung per Client-Zertifikat erfordert ein Client-Zertifikat: Aktiviere es unten.",
 
   "tpl.title": "Mit einer Vorlage beginnen",
+  "req.requirement": "Anforderung",
+  "req.functionalRequirement": "Funktionale Anforderung",
+  "req.interfaceRequirement": "Schnittstellenanforderung",
+  "req.performanceRequirement": "Leistungsanforderung",
+  "req.physicalRequirement": "Physische Anforderung",
+  "req.designConstraint": "Entwurfsbeschränkung",
+  "req.element": "Element",
+  "tpl.sysmlRequirements": "SysML-Anforderungen",
+  "tpl.sysmlRequirementsDesc":
+    "Abgeleitete und verfeinerte Anforderungen, erfüllt durch Blöcke und durch Tests verifiziert.",
+  "tpl.sysmlBdd": "SysML-Blockdefinition",
+  "tpl.sysmlBddDesc": "Blöcke mit Teilen, Werten und Ports, zu einem System zusammengesetzt.",
+  "tpl.sysmlStateMachine": "SysML-Zustandsautomat",
+  "tpl.sysmlStateMachineDesc":
+    "Die Betriebsarten eines Systems und die Ereignisse, die zwischen ihnen wechseln.",
+  "tpl.sysmlActivity": "SysML-Aktivität",
+  "tpl.sysmlActivityDesc":
+    "Aktionen, eine Entscheidung und eine Zusammenführung, vom Start- bis zum Endknoten.",
   "tpl.blank": "Leeres Diagramm",
   "tpl.blankDesc": "Ein leeres {kind} zum selbst Aufbauen.",
   "tpl.open": "Vorlagen",
