@@ -66,6 +66,24 @@ function adoptBinding(doc: DocMeta): void {
   });
 }
 
+/**
+ * Give the document restored at boot its file binding.
+ *
+ * The workspace index comes back from localStorage, but the live binding of
+ * the active document lives in `useFileStore`, which starts empty. Left that
+ * way, the restored file tab looks like a scratch: opening the same file
+ * again (`?file=` on every page load) misses it and makes a new tab, and the
+ * first switch away writes the empty binding over it — a copy with no path
+ * that never sees the file again. Run once, before anything opens a file.
+ */
+export function bindActiveDocument(): void {
+  const doc = activeDoc();
+  if (!doc) return;
+  const live = useFileStore.getState();
+  if (live.path || live.handle || live.savedCode !== null) return;
+  adoptBinding(doc);
+}
+
 /** Show a document, saving whatever is on screen first. */
 export async function switchTo(id: string): Promise<void> {
   const { activeId, docs } = useWorkspace.getState();

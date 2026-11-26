@@ -24,6 +24,7 @@ import { useWorkspace } from "./workspace";
 import {
   adoptBackgroundFileHere,
   adoptFileHere,
+  bindActiveDocument,
   openFileHere,
   unsavedDocuments,
 } from "./documents";
@@ -47,6 +48,9 @@ export default function App() {
     // Called either way: it builds the workspace as well as returning code,
     // and the rest of the app expects one to exist.
     const initial = loadInitialCode();
+    // Before the effect below opens `?file=`: the restored file tab must keep
+    // its binding, or it is opened again as a copy (see the function).
+    bindActiveDocument();
     // A host sends the document it owns, a moment later. Drawing ours first
     // is a flash of a diagram the user did not open — so the splash stays up
     // until the real one lands, which is what `booted` already means.

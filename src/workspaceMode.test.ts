@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useGraphStore, loadInitialCode } from "./store";
 import { useFileStore } from "./files";
-import { adoptBackgroundFileHere, adoptFileHere } from "./documents";
+import { adoptBackgroundFileHere, adoptFileHere, bindActiveDocument, switchTo } from "./documents";
 import { DOC_PREFIX, INDEX_KEY, loadWorkspace, useWorkspace } from "./workspace";
 import { AUTOSAVE_MS, startAutosave } from "./autosave";
 import { resetWatched, setBase } from "./diskWatch";
@@ -51,6 +51,7 @@ function seed(docs: Array<{ id: string; path: string | null }>) {
 async function boot() {
   const { state, code } = loadWorkspace(loadInitialCode());
   useWorkspace.setState(state);
+  bindActiveDocument();
   await useGraphStore.getState().applyCode(code, { record: false });
 }
 
@@ -103,6 +104,31 @@ describe("workspace mode", () => {
     await adoptFileHere({ path: `${ROOT}/docs/a.mmd`, content: A });
     expect(useWorkspace.getState().activeId).toBe(first);
     expect(useWorkspace.getState().docs).toHaveLength(n);
+  });
+
+  it("reuses the restored file tab when the same file is opened again after a reload", async () => {
+    setWorkspace(true);
+    seed([{ id: "wf", path: `${ROOT}/WORKFLOW.mmd` }]);
+    await boot();
+    // ?file=WORKFLOW.mmd on every page load: the restored tab must take it.
+    await adoptFileHere({ path: `${ROOT}/WORKFLOW.mmd`, content: B });
+    const s = useWorkspace.getState();
+    expect(s.docs).toHaveLength(1);
+    expect(s.activeId).toBe("wf");
+    expect(useFileStore.getState().path).toBe(`${ROOT}/WORKFLOW.mmd`);
+  });
+
+  it("keeps the file binding of the restored tab when the user switches away", async () => {
+    setWorkspace(true);
+    seed([
+      { id: "wf", path: `${ROOT}/WORKFLOW.mmd` },
+      { id: "x", path: `${ROOT}/x.mmd` },
+    ]);
+    await boot();
+    await switchTo("x");
+    const wf = useWorkspace.getState().docs.find((d) => d.id === "wf");
+    expect(wf?.path).toBe(`${ROOT}/WORKFLOW.mmd`);
+    expect(wf?.savedCode).toBe(A);
   });
 
   it("opens background files in a new inactive tab, once", async () => {
